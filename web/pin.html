@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Apollo — PIN</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@100..125,400..800&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+:root{
+  --bg:#EDEFF2; --panel:#FFFFFF; --panel-2:#F3F6F9; --line:#D2D9E1;
+  --text:#0C1116; --muted:#5B6875; --accent:#3D7A00; --accent-ink:#FFFFFF; --crit:#C0362B; --warn:#8A6208;
+  --glow:rgba(61,122,0,.12);
+}
+@media (prefers-color-scheme:dark){
+  :root{
+    --bg:#090C10; --panel:#11161C; --panel-2:#151C24; --line:#1F2831;
+    --text:#DFE6EC; --muted:#8494A2; --accent:#8BDD2A; --accent-ink:#0C1603; --crit:#FF5F52; --warn:#F2C14E;
+    --glow:rgba(139,221,42,.18);
+  }
+}
+*{box-sizing:border-box}
+body{margin:0; min-height:100vh; display:grid; place-items:center; background:var(--bg); color:var(--text);
+  font-family:"IBM Plex Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; -webkit-font-smoothing:antialiased}
+.card{width:min(380px,92vw); border:1px solid var(--line); border-radius:16px; background:var(--panel); padding:32px 28px 28px;
+  display:flex; flex-direction:column; align-items:center; gap:18px; box-shadow:0 20px 60px rgba(0,0,0,.25)}
+.brand{display:flex; align-items:center; gap:10px}
+.mark{width:30px; height:30px; border-radius:9px; border:1px solid var(--line);
+  background:radial-gradient(circle at 50% 118%, var(--accent) 0 42%, transparent 43%), var(--panel-2)}
+.brand b{font-family:"Archivo",sans-serif; font-stretch:120%; font-weight:800; font-size:15px; letter-spacing:.08em; text-transform:uppercase}
+h1{margin:0; font-family:"Archivo",sans-serif; font-stretch:116%; font-weight:700; font-size:20px; text-transform:uppercase}
+p{margin:0; color:var(--muted); font-size:13.5px; text-align:center}
+form{display:flex; flex-direction:column; align-items:center; gap:16px; width:100%}
+.pin{display:flex; gap:10px}
+.pin input{
+  width:56px; height:64px; text-align:center; font-family:"IBM Plex Mono",monospace; font-size:28px; font-weight:600;
+  border:1px solid var(--line); border-radius:10px; background:var(--panel-2); color:var(--text); outline:none; caret-color:transparent;
+}
+.pin input:focus{border-color:var(--accent); box-shadow:0 0 0 3px var(--glow)}
+.pin.shake{animation:shake .35s}
+@keyframes shake{20%{transform:translateX(-6px)}40%{transform:translateX(6px)}60%{transform:translateX(-4px)}80%{transform:translateX(4px)}}
+button{width:100%; padding:13px; border:0; border-radius:10px; background:var(--accent); color:var(--accent-ink);
+  font:inherit; font-weight:600; font-size:15px; cursor:pointer; box-shadow:0 8px 22px var(--glow)}
+button:disabled{opacity:.5; cursor:not-allowed; box-shadow:none}
+.msg{min-height:20px; font-size:13px; color:var(--crit); text-align:center}
+.msg.warn{color:var(--warn)}
+.foot{font-family:"IBM Plex Mono",monospace; font-size:10px; letter-spacing:.14em; text-transform:uppercase; color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.pin.shake{animation:none}}
+</style>
+</head>
+<body>
+<main class="card">
+  <div class="brand"><span class="mark" aria-hidden="true"></span><b>Apollo</b></div>
+  <h1>Enter your PIN</h1>
+  <p>This gaming PC only takes orders from screens that know the code.</p>
+  <form id="f" autocomplete="off">
+    <div class="pin" id="pin" role="group" aria-label="4 digit PIN">
+      <input type="password" inputmode="numeric" pattern="[0-9]*" maxlength="1" aria-label="digit 1" autofocus>
+      <input type="password" inputmode="numeric" pattern="[0-9]*" maxlength="1" aria-label="digit 2">
+      <input type="password" inputmode="numeric" pattern="[0-9]*" maxlength="1" aria-label="digit 3">
+      <input type="password" inputmode="numeric" pattern="[0-9]*" maxlength="1" aria-label="digit 4">
+    </div>
+    <div class="msg" id="msg" aria-live="polite"></div>
+    <button type="submit" id="go">Unlock</button>
+  </form>
+  <div class="foot">Apollo Home Stream</div>
+</main>
+<script>
+(function(){
+  var boxes=[].slice.call(document.querySelectorAll('.pin input')), msg=document.getElementById('msg'),
+      go=document.getElementById('go'), form=document.getElementById('f'), wrap=document.getElementById('pin');
+  var lockTimer=null;
+  boxes.forEach(function(b,i){
+    b.addEventListener('input',function(){
+      b.value=b.value.replace(/\D/g,'').slice(-1);
+      if(b.value && i<boxes.length-1) boxes[i+1].focus();
+      if(b.value && i===boxes.length-1) submit();
+    });
+    b.addEventListener('keydown',function(e){
+      if(e.key==='Backspace' && !b.value && i>0){ boxes[i-1].value=''; boxes[i-1].focus(); e.preventDefault(); }
+    });
+    b.addEventListener('paste',function(e){
+      var t=(e.clipboardData||window.clipboardData).getData('text').replace(/\D/g,'');
+      if(t.length){ e.preventDefault(); t.split('').slice(0,4).forEach(function(c,j){ boxes[j].value=c; }); boxes[Math.min(t.length,4)-1].focus(); if(t.length>=4) submit(); }
+    });
+  });
+  function clear(){ boxes.forEach(function(b){b.value=''}); boxes[0].focus(); }
+  function setLocked(on){ go.disabled=on; boxes.forEach(function(b){b.disabled=on}); }
+  function lock(seconds){
+    clearInterval(lockTimer); var left=seconds; setLocked(true); msg.className='msg warn';
+    function tick(){ if(left<=0){ clearInterval(lockTimer); setLocked(false); msg.textContent=''; clear(); return; } msg.textContent='Too many tries — wait '+left+' s'; left--; }
+    tick(); lockTimer=setInterval(tick,1000);
+  }
+  function submit(){
+    var pin=boxes.map(function(b){return b.value}).join('');
+    if(pin.length<4) return;
+    go.disabled=true; msg.className='msg'; msg.textContent='';
+    fetch('/api/pin',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pin:pin})})
+      .then(function(r){ return r.json().then(function(j){ return {s:r.status,j:j}; }); })
+      .then(function(x){
+        if(x.s===200){
+          var next=new URLSearchParams(location.search).get('next')||'/';
+          if(next.charAt(0)!=='/'||next.indexOf('//')===0) next='/';
+          location.replace(next); return;
+        }
+        if(x.s===429){ lock(x.j.retry_after||30); return; }
+        go.disabled=false; wrap.classList.remove('shake'); void wrap.offsetWidth; wrap.classList.add('shake');
+        msg.textContent = (typeof x.j.left==='number') ? 'Wrong PIN — '+x.j.left+' more tries before a timeout' : 'Wrong PIN';
+        clear();
+      })
+      .catch(function(){ go.disabled=false; msg.textContent='Couldn’t reach the PC'; });
+  }
+  form.addEventListener('submit',function(e){ e.preventDefault(); submit(); });
+})();
+</script>
+</body>
+</html>

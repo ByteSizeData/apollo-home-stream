@@ -30,6 +30,9 @@ Then from any screen on your network — or your tailnet — open:
 http://<your-pc-name>:8777
 ```
 
+You'll be asked for a PIN — **2550** out of the box. Enter it once per device and that screen
+stays unlocked for 30 days (or until you press *Lock this screen*).
+
 Press a game. It starts on the PC. Open Artemis or Moonlight, pick the PC, and it's on screen.
 
 Needs Python 3.8+ and nothing else — no `pip install`. On Windows, get Python from
@@ -41,7 +44,8 @@ python.org (tick *Add to PATH*), or `winget install Python.Python.3.12`.
 --port 9000            serve somewhere other than 8777
 --steam "D:\Steam"     if it can't find your Steam folder
 --name "Gaming station"  how the PC is shown in the page
---token secret         require an X-Apollo-Token header to launch (see Security)
+--pin 4821             change the PIN (default 2550); --pin "" turns the gate off entirely
+--token secret         additionally require an X-Apollo-Token header to launch (see Security)
 --dry-run              print what it found and exit — try this first
 ```
 
@@ -58,10 +62,24 @@ python.org (tick *Add to PATH*), or `winget install Python.Python.3.12`.
 
 ### Security
 
-The bridge binds to all interfaces so your other devices can reach it. Anyone who can reach
-port 8777 can see your game list and start games on the PC. On a home network or a tailnet
-that's you and yours. If that's not enough, run with `--token` and add the matching
-`X-Apollo-Token` header — or just don't expose the port beyond your LAN / VPN.
+The bridge binds to all interfaces so your other devices can reach it, and everything —
+the page and the API — sits behind the PIN:
+
+- Wrong guesses are counted per device. After 5 you wait 30 s, then 60, 120… up to 15 min.
+  A 4-digit PIN is 10,000 combinations; at those rates a brute-force takes weeks, and you'd
+  see the lockout messages. Change it from the default with `--pin` or `APOLLO_PIN=`.
+- Unlocking sets an `HttpOnly`, `SameSite=Strict` session cookie with a random 256-bit
+  token, valid 30 days. *Lock this screen* in the footer ends it.
+- The PIN is compared in constant time and never appears in the page or the logs.
+
+This is designed for a home network or a tailnet — to keep housemates and guests from
+launching things on your PC. It is **not** hardened for the open internet: the bridge
+speaks plain HTTP, so on an untrusted network the PIN and cookie travel in the clear.
+Do **not** port-forward 8777. Use Tailscale (the Install tab explains), which encrypts
+the whole path.
+
+If you want a second factor for launching specifically, run with `--token` and send the
+matching `X-Apollo-Token` header.
 
 Do **not** port-forward 8777 to the internet. Use Tailscale (the Install tab explains).
 

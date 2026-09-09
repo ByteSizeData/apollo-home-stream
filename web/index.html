@@ -83,23 +83,7 @@ a{color:var(--accent)}
 h2.sec{font-family:"Archivo",sans-serif; font-stretch:116%; font-weight:700; font-size:17px; text-transform:uppercase; letter-spacing:.03em}
 
 /* ---- play ---- */
-.screens{display:flex; gap:8px; flex-wrap:wrap; margin:22px 0 26px}
-.screen{
-  display:flex; align-items:center; gap:9px; border:1px solid var(--line); background:var(--panel);
-  border-radius:99px; padding:8px 15px; font-size:13.5px; color:var(--muted);
-}
-.screen[aria-pressed="true"]{border-color:var(--accent); background:color-mix(in srgb,var(--accent) 10%,var(--panel)); color:var(--text)}
-.screen .dot{width:7px; height:7px; border-radius:50%; background:var(--dim)}
-.screen[aria-pressed="true"] .dot{background:var(--accent)}
 
-.resume{
-  display:grid; grid-template-columns:minmax(0,260px) minmax(0,1fr); gap:0; margin-bottom:34px;
-  border:1px solid var(--line); border-radius:14px; overflow:hidden; background:var(--panel); box-shadow:var(--shadow);
-}
-.resume .rart{position:relative; min-height:190px}
-.resume .rbody{padding:26px 28px; display:flex; flex-direction:column; justify-content:center; gap:12px}
-.resume h1{font-family:"Archivo",sans-serif; font-stretch:120%; font-weight:800; font-size:clamp(26px,4vw,40px); line-height:1; text-transform:uppercase}
-.resume p{margin:0; color:var(--muted); font-size:14px}
 .btn{
   display:inline-flex; align-items:center; justify-content:center; gap:9px; border-radius:9px;
   padding:13px 24px; font-weight:600; font-size:15px; border:1px solid var(--line); background:var(--panel-2);
@@ -112,41 +96,33 @@ h2.sec{font-family:"Archivo",sans-serif; font-stretch:116%; font-weight:700; fon
 .btn.ghost{background:transparent}
 .btn:disabled{opacity:.5; cursor:not-allowed; transform:none}
 
-.games{display:grid; grid-template-columns:repeat(auto-fill,minmax(210px,1fr)); gap:16px}
-.game{
-  border:1px solid var(--line); border-radius:12px; overflow:hidden; background:var(--panel); text-align:left;
-  transition:transform .16s ease, border-color .16s ease, box-shadow .16s ease; position:relative;
-}
-.game:hover{transform:translateY(-4px); border-color:var(--accent); box-shadow:var(--shadow)}
-.art{position:relative; aspect-ratio:16/10; overflow:hidden; background:var(--panel-3)}
-.art::after{
-  content:""; position:absolute; inset:0;
-  background:linear-gradient(180deg,rgba(0,0,0,.24) 0 16%,transparent 42%,rgba(0,0,0,.44)),
-             radial-gradient(120% 80% at 50% 50%,transparent 40%,rgba(0,0,0,.32));
-}
-.art .initial{
-  position:absolute; right:-4px; bottom:-26px; font-family:"Archivo",sans-serif; font-stretch:125%;
-  font-weight:800; font-size:92px; line-height:1; color:var(--art-ink); letter-spacing:-.04em;
-}
-.game .gb{padding:13px 14px 15px; display:flex; align-items:center; gap:10px}
-.game h3{font-size:15px; font-weight:600; line-height:1.25; flex:1; min-width:0}
-.game .hrs{font-family:"IBM Plex Mono",monospace; font-size:11px; color:var(--dim); white-space:nowrap}
-.game kbd{
-  position:absolute; top:10px; left:10px; font-family:"IBM Plex Mono",monospace; font-size:10px;
-  background:color-mix(in srgb,#000 60%,transparent); color:#fff; border-radius:5px; padding:3px 7px; backdrop-filter:blur(6px);
-}
-.hint{color:var(--dim); font-size:12.5px; margin:14px 0 0; font-family:"IBM Plex Mono",monospace}
 
 /* ---- live data ---- */
-.art img{position:absolute; inset:0; width:100%; height:100%; object-fit:cover; display:block}
-.art img[hidden]{display:none}
 .demo{
   display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin:0 0 18px;
   border:1px dashed color-mix(in srgb,var(--warn) 55%,var(--line)); border-radius:10px; padding:11px 14px; font-size:13px; color:var(--muted);
 }
 .demo b{color:var(--text)}
 .demo code{font-family:"IBM Plex Mono",monospace; font-size:12px; background:var(--panel-2); border:1px solid var(--line-soft); border-radius:4px; padding:1px 6px}
-.game .hrs{max-width:12ch; overflow:hidden; text-overflow:ellipsis}
+
+/* ---- play: covers on the ground, nothing else ---- */
+.resume{display:grid; grid-template-columns:190px minmax(0,1fr); gap:28px; align-items:center; margin:6px 0 42px}
+.resume .rart{position:relative; aspect-ratio:2/3; border-radius:12px; overflow:hidden; border:1px solid var(--line-soft); background:var(--panel-3)}
+.resume .rbody{display:flex; flex-direction:column; gap:12px; min-width:0}
+.resume h1{font-family:"Archivo",sans-serif; font-stretch:120%; font-weight:800; font-size:clamp(28px,4.2vw,46px); line-height:1; text-transform:uppercase; letter-spacing:-.01em}
+.resume p{margin:0; color:var(--muted); font-size:14px}
+.games{display:grid; grid-template-columns:repeat(auto-fill,minmax(148px,1fr)); gap:22px 16px}
+.game{text-align:left; border-radius:10px; display:block; width:100%}
+.art{position:relative; aspect-ratio:2/3; overflow:hidden; border-radius:10px; border:1px solid var(--line-soft); background:var(--panel-3);
+  transition:transform .16s ease, box-shadow .16s ease, border-color .16s ease}
+.game:hover .art,.game:focus-visible .art{transform:translateY(-4px); box-shadow:var(--shadow); border-color:var(--accent)}
+.art.gen::after{content:""; position:absolute; inset:0; background:linear-gradient(180deg,rgba(0,0,0,.18),transparent 40%,rgba(0,0,0,.42))}
+.art .initial{position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); font-family:"Archivo",sans-serif; font-stretch:125%;
+  font-weight:800; font-size:64px; line-height:1; color:var(--art-ink); letter-spacing:-.04em}
+.art img{position:absolute; inset:0; width:100%; height:100%; object-fit:cover; display:block}
+.game h3{font-size:13.5px; font-weight:600; line-height:1.3; margin:10px 2px 1px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.game .meta{font-family:"IBM Plex Mono",monospace; font-size:11px; color:var(--dim); margin:0 2px}
+.lamp.off{background:var(--dim); box-shadow:none}
 
 /* ---- install ---- */
 .stepnum{
@@ -214,7 +190,8 @@ code.k{font-family:"IBM Plex Mono",monospace; font-size:12.5px; background:var(-
 /* ---- launch overlay ---- */
 .overlay{position:fixed; inset:0; z-index:90; background:var(--scrim); display:grid; place-items:center; padding:22px}
 .stage{width:min(760px,100%); border:1px solid var(--line); border-radius:14px; background:var(--panel); overflow:hidden; box-shadow:0 30px 80px rgba(0,0,0,.5)}
-.stage-art{position:relative; aspect-ratio:16/7; display:grid; place-items:center}
+.stage-art{position:relative; aspect-ratio:16/7; display:grid; place-items:center; overflow:hidden}
+.stage-art img{position:absolute; inset:0; width:100%; height:100%; object-fit:cover; filter:blur(6px) brightness(.6); transform:scale(1.08)}
 .stage-art .veil{position:absolute; inset:0; background:linear-gradient(0deg,var(--panel) 5%,rgba(0,0,0,.25) 70%)}
 .stage-in{position:relative; z-index:2; text-align:center; display:flex; flex-direction:column; gap:14px; align-items:center; padding:22px}
 .stage-in .step{font-family:"Archivo",sans-serif; font-stretch:118%; font-weight:700; font-size:clamp(20px,3.2vw,30px); text-transform:uppercase; color:#fff; text-shadow:0 2px 22px rgba(0,0,0,.7)}
@@ -222,8 +199,6 @@ code.k{font-family:"IBM Plex Mono",monospace; font-size:12.5px; background:var(-
 .bar{width:min(400px,72vw); height:5px; background:rgba(255,255,255,.22); border-radius:99px; overflow:hidden}
 .bar i{display:block; height:100%; width:0; background:var(--accent); transition:width .5s cubic-bezier(.4,0,.2,1)}
 .stage-foot{padding:16px 20px; display:flex; align-items:center; gap:14px; flex-wrap:wrap; border-top:1px solid var(--line)}
-.stage-foot .stat{display:flex; flex-direction:column}
-.stage-foot .stat b{font-family:"IBM Plex Mono",monospace; font-size:14px; font-weight:500}
 .stage-foot .grow{margin-left:auto; display:flex; gap:10px}
 
 footer{border-top:1px solid var(--line); padding:22px 24px 40px; color:var(--dim); font-size:12.5px}
@@ -231,7 +206,7 @@ footer .in{max-width:1180px; margin:0 auto; display:flex; gap:16px; flex-wrap:wr
 
 @media (max-width:720px){
   .resume{grid-template-columns:1fr}
-  .resume .rart{min-height:150px}
+  .resume .rart{width:150px}
   .wrap{padding:22px 16px 50px}
   .top{padding:12px 16px}
   .tabs{flex:1}
@@ -249,7 +224,7 @@ footer .in{max-width:1180px; margin:0 auto; display:flex; gap:16px; flex-wrap:wr
     <button type="button" role="tab" id="tabInstall" aria-selected="false" aria-controls="viewInstall">Install</button>
     <button type="button" role="tab" id="tabPower" aria-selected="false" aria-controls="viewPower">Sleep &amp; wake</button>
   </div>
-  <div class="host" id="hostBox"><span class="lamp"></span><span id="hostText">Gaming station — awake</span></div>
+  <div class="host" id="hostBox"><span class="lamp off" id="hostLamp"></span><span id="hostText">Sample library</span></div>
 </div>
 
 <!-- ============ PLAY ============ -->
@@ -258,36 +233,34 @@ footer .in{max-width:1180px; margin:0 auto; display:flex; gap:16px; flex-wrap:wr
     <b>Sample library.</b> <span>Run the bridge on your gaming PC and open this page from it to see your real games:</span>
     <code>python bridge/apollo_bridge.py</code>
   </div>
-  <div class="screens" id="screens" aria-label="Which screen to play on"></div>
 
   <div class="resume">
     <div class="rart" id="resumeArt" aria-hidden="true"></div>
     <div class="rbody">
-      <span class="eyebrow" id="resumeEyebrow">Pick up where you left off</span>
+      <span class="eyebrow">Continue</span>
       <h1 id="resumeTitle">Sable Reach</h1>
       <p id="resumeSub"></p>
-      <div><button type="button" class="btn primary big" id="resumeBtn">▶ Resume</button></div>
+      <div><button type="button" class="btn primary big" id="resumeBtn">▶ Play</button></div>
     </div>
   </div>
 
   <h2 class="sec">Recently played</h2>
-  <div class="games" id="games" style="margin-top:14px"></div>
-  <p class="hint">Click a game, or press its number key.</p>
+  <div class="games" id="games" style="margin-top:16px"></div>
 </div>
 
 <!-- ============ INSTALL ============ -->
 <div class="wrap" id="viewInstall" role="tabpanel" aria-labelledby="tabInstall" hidden>
-  <p class="lede">Apollo goes on the PC your games are installed on. A client goes on every screen you want to play on. Pair them once and you're done — about five minutes.</p>
+  <p class="lede">Apollo on the PC with the games. A client on every screen you play on. Pair once. About five minutes.</p>
 
   <div class="block">
     <div class="block-head"><span class="stepnum">1</span><h2 class="sec">On your gaming PC</h2></div>
-    <p>This is the machine doing the work — it launches the game, encodes the picture on your GPU, and sends it out.</p>
+    <p>The machine doing the work: it runs the game and sends the picture out.</p>
     <div class="cards">
       <div class="card">
         <h3><span class="ic">🖥</span> Windows</h3>
         <p>Paste this into Terminal or PowerShell:</p>
         <div class="cmd"><code id="cmd1">winget install ClassicOldSong.Apollo</code><button type="button" data-copy="cmd1">Copy</button></div>
-        <p>No winget? Download the installer instead. When it finishes, Apollo opens its settings in your browser at <code class="k">https://localhost:47990</code> — set a username and password there.</p>
+        <p>Or use the installer. Afterwards Apollo's settings open at <code class="k">https://localhost:47990</code> — set a username and password there.</p>
         <a class="btn" href="https://github.com/ClassicOldSong/Apollo/releases" target="_blank" rel="noopener">Download Apollo ↗</a>
       </div>
     </div>
@@ -295,37 +268,35 @@ footer .in{max-width:1180px; margin:0 auto; display:flex; gap:16px; flex-wrap:wr
 
   <div class="block">
     <div class="block-head"><span class="stepnum">2</span><h2 class="sec">On every screen you play on</h2></div>
-    <p>Pick the ones you own. They all connect to the same PC, and each gets its own resolution automatically.</p>
+    <p>Pick the ones you own. Each gets its own resolution automatically.</p>
     <div class="note" style="margin-bottom:18px; border-color:var(--line); background:var(--panel-2)">
       <b class="mk" style="color:var(--accent)">i</b>
-      <span><b>Why isn't Artemis on everything?</b> Artemis is a fork of Moonlight's <i>Android</i> app, so it only runs on Android — phones, tablets, Android TV, Fire TV, Shield. Desktop versions are being worked on and there's no iOS version or timeline. Everywhere else you use Moonlight, which connects to Apollo perfectly well — you just miss some of Artemis's extras, like its resolution and input handling.</span>
+      <span><b>Artemis is Android-only</b> — it's built from Moonlight's Android app. Everywhere else you use Moonlight, which works with Apollo just fine; you only lose a few of Artemis's extras.</span>
     </div>
     <div class="cards">
       <div class="card">
         <h3><span class="ic">📱</span> Android phone or tablet</h3>
-        <p>Install <b>Artemis</b> — the client built to match Apollo. It asks your PC for your phone's exact screen resolution and refresh rate.</p>
+        <p><b>Artemis</b> — the client made for Apollo. Matches your phone's exact resolution and refresh rate.</p>
         <a class="btn" href="https://github.com/ClassicOldSong/moonlight-android/releases" target="_blank" rel="noopener">Get Artemis ↗</a>
       </div>
       <div class="card">
         <h3><span class="ic">📺</span> TV box</h3>
-        <p><b>Android TV, Fire TV, Shield</b> — same Artemis app, installed from the same page, or sideload the APK if your TV has no store.</p>
-        <p><b>Apple TV</b> — Moonlight has a tvOS app on the App Store instead. <b>LG and Samsung smart TVs</b> have community Moonlight builds, though a cheap Android box is usually less hassle.</p>
+        <p><b>Android TV, Fire TV, Shield</b> — Artemis, same download. <b>Apple TV</b> — Moonlight from the App Store. LG and Samsung TVs have community Moonlight builds, but an Android box is less hassle.</p>
         <a class="btn" href="https://github.com/ClassicOldSong/moonlight-android/releases" target="_blank" rel="noopener">Get Artemis ↗</a>
       </div>
       <div class="card">
         <h3><span class="ic">📲</span> iPhone or iPad</h3>
-        <p>No Artemis here — it's an Android app. Two options that both pair with Apollo normally:</p>
-        <p><b>Moonlight</b> — free and official, works fine. <b>VoidLink</b> — a paid App Store app built from Moonlight with the Artemis changes carried over, so it handles touch controls and resolution more like Artemis does. Search the App Store by name.</p>
+        <p><b>Moonlight</b> — free, official, works. Or <b>VoidLink</b> — a paid App Store app with the Artemis touch and resolution changes carried over. Search the App Store by name.</p>
         <a class="btn" href="https://moonlight-stream.org/" target="_blank" rel="noopener">Get Moonlight ↗</a>
       </div>
       <div class="card">
         <h3><span class="ic">💻</span> Mac, Windows or Linux laptop</h3>
-        <p><b>Moonlight</b> — desktop builds for all three, and it pairs with Apollo the same way. On a Mac there's also an unofficial <i>moonlight-macos</i> community build that looks nicer, if you don't mind installing something unofficial.</p>
+        <p><b>Moonlight</b> — desktop builds for all three. (Mac: there's also an unofficial <i>moonlight-macos</i> build that looks nicer.)</p>
         <a class="btn" href="https://moonlight-stream.org/" target="_blank" rel="noopener">Get Moonlight ↗</a>
       </div>
       <div class="card">
         <h3><span class="ic">🎮</span> Steam Deck</h3>
-        <p>Install <b>Moonlight</b> from the Discover store in Desktop Mode, then add it to your library so it launches from Game Mode.</p>
+        <p><b>Moonlight</b> from the Discover store in Desktop Mode. Add it to your library so it launches from Game Mode.</p>
         <a class="btn" href="https://moonlight-stream.org/" target="_blank" rel="noopener">Get Moonlight ↗</a>
       </div>
     </div>
@@ -333,66 +304,42 @@ footer .in{max-width:1180px; margin:0 auto; display:flex; gap:16px; flex-wrap:wr
 
   <div class="block">
     <div class="block-head"><span class="stepnum">3</span><h2 class="sec">Pair each device once</h2></div>
-    <p>Open the client, pick your PC from the list, and it shows a four-digit code:</p>
+    <p>Open the client, pick your PC, and it shows a code:</p>
     <div class="pinrow" aria-hidden="true"><b>4</b><b>1</b><b>7</b><b>2</b></div>
-    <p style="margin-top:12px">Type that code into Apollo's settings page on the PC (<code class="k">https://localhost:47990</code>). That device is trusted from then on.</p>
+    <p style="margin-top:12px">Type it into Apollo's settings on the PC (<code class="k">https://localhost:47990</code>). Done — that device is trusted from now on.</p>
     <div class="note" style="margin-top:14px">
       <b class="mk">⚠</b>
-      <span><b>Worth knowing before it confuses you:</b> only the <b>first</b> device you pair gets full permissions. Every device after that can see your games but can't start one — it just does nothing when you press play. Open that device in Apollo's settings and turn on <b>Launch Apps</b>, <b>Mouse Input</b> and <b>Keyboard Input</b>.</span>
+      <span><b>Only the first device you pair gets full permissions.</b> Every later one can see your games but not start them — pressing play does nothing. Open that device in Apollo's settings and turn on <b>Launch Apps</b>, <b>Mouse Input</b> and <b>Keyboard Input</b>.</span>
     </div>
   </div>
 
   <div class="block">
     <div class="block-head"><span class="stepnum">4</span><h2 class="sec">Reach it from anywhere</h2></div>
-    <p>Only needed if you want to play away from the house. At home you're already done.</p>
-
-    <div class="note" style="margin-bottom:18px; border-color:var(--line); background:var(--panel-2)">
-      <b class="mk" style="color:var(--accent)">i</b>
-      <span><b>Do this last, not first.</b> Get Apollo talking to one client on your home network before you add a VPN — otherwise, when something doesn't work, you can't tell whether it's Apollo, the client, pairing, or Tailscale. One new thing at a time.
-      <br><br><b>But once it's installed, pair using the Tailscale name.</b> Tailscale gives your PC a name that stays the same at home and away. If you add the host in your client by that name, the one entry works everywhere and you never pair a second time. Pair by home IP instead and you'll be adding the PC all over again from the road.</span>
-    </div>
+    <p>Only for playing away from home. Do this <b>last</b> — get one client working at home first, so if something breaks you know it's the VPN.</p>
 
     <div class="cards">
       <div class="card">
-        <h3><span class="ic">🖥</span> On the gaming PC</h3>
-        <p>Windows — paste this, or grab the installer:</p>
+        <h3><span class="ic">🔒</span> Tailscale on everything</h3>
+        <p>Same account on the PC and every device you travel with. Nothing on your router changes, nothing is exposed.</p>
         <div class="cmd"><code id="cmdTs">winget install --id Tailscale.Tailscale</code><button type="button" data-copy="cmdTs">Copy</button></div>
-        <a class="btn" href="https://tailscale.com/download/windows" target="_blank" rel="noopener">Windows installer ↗</a>
-      </div>
-
-      <div class="card">
-        <h3><span class="ic">📲</span> On your phone and tablet</h3>
-        <p>Install it from the store, sign in, and leave it on. Both apps are free.</p>
-        <div style="display:flex; gap:10px; flex-wrap:wrap">
-          <a class="btn" href="https://tailscale.com/download/ios" target="_blank" rel="noopener">iPhone &amp; iPad ↗</a>
+        <div style="display:flex; gap:8px; flex-wrap:wrap">
+          <a class="btn" href="https://tailscale.com/download/windows" target="_blank" rel="noopener">Windows ↗</a>
+          <a class="btn" href="https://tailscale.com/download/mac" target="_blank" rel="noopener">Mac ↗</a>
+          <a class="btn" href="https://tailscale.com/download/ios" target="_blank" rel="noopener">iPhone ↗</a>
           <a class="btn" href="https://tailscale.com/download/android" target="_blank" rel="noopener">Android ↗</a>
         </div>
       </div>
 
       <div class="card">
-        <h3><span class="ic">💻</span> On your Mac or laptop</h3>
-        <p>The Mac app is a normal download and sign-in.</p>
-        <a class="btn" href="https://tailscale.com/download/mac" target="_blank" rel="noopener">Mac app ↗</a>
-        <p style="margin-top:4px">On Linux or a Steam Deck in Desktop Mode, the official one-liner:</p>
-        <div class="cmd"><code id="cmdTsL">curl -fsSL https://tailscale.com/install.sh | sh</code><button type="button" data-copy="cmdTsL">Copy</button></div>
+        <h3><span class="ic">⚡</span> Two things that bite</h3>
+        <p><b>Pair by the Tailscale name</b>, not the home IP — then one entry works at home and away.</p>
+        <p><b>Allow <code class="k">UDP 41641</code></b> on the PC. Without it Tailscale falls back to a relay capped near 5–10 Mbps: it connects, it just looks terrible.</p>
       </div>
 
       <div class="card">
-        <h3><span class="ic">🔑</span> Then: one account, one setting</h3>
-        <p>Sign every device into the <b>same</b> Tailscale account — that's what puts them on one private network. Nothing on your router changes and nothing is exposed to the internet.</p>
-        <p>Then allow <code class="k">UDP 41641</code> through the firewall on the gaming PC.</p>
-      </div>
-
-      <div class="card">
-        <h3><span class="ic">⚡</span> If it connects but looks terrible</h3>
-        <p>That's the relay, not your PC and not your GPU. When Tailscale can't open a direct path it quietly falls back to a relay that caps around <b>5–10 Mbps</b> — enough to connect, nowhere near enough to look good.</p>
-        <p>Opening <code class="k">UDP 41641</code> is the fix. Once it goes direct it will carry as much as your home upload allows.</p>
-      </div>
-
-      <div class="card">
-        <h3><span class="ic">🔌</span> Don't forget the PC itself</h3>
-        <p>A sleeping PC can't be woken from a hotel — wake-up packets don't cross the internet. Set it to <b>Always awake</b> on the Sleep &amp; wake page before you travel, or leave something at home that can wake it for you.</p>
-        <button type="button" class="btn" id="gotoPower">Sleep &amp; wake settings →</button>
+        <h3><span class="ic">🔌</span> Keep the PC awake</h3>
+        <p>A wake-up packet can't reach the PC from a hotel. Switch to <b>Always awake</b> before you travel.</p>
+        <button type="button" class="btn" id="gotoPower">Sleep &amp; wake →</button>
       </div>
     </div>
   </div>
@@ -451,17 +398,16 @@ footer .in{max-width:1180px; margin:0 auto; display:flex; gap:16px; flex-wrap:wr
       </div>
     </div>
     <div class="stage-foot">
-      <div class="stat"><span class="eyebrow">Latency</span><b id="sPing">—</b></div>
-      <div class="stat"><span class="eyebrow">Playing on</span><b id="sDev">—</b></div>
-      <div class="grow"><button type="button" class="btn" id="stageClose">Stop</button></div>
+      <span class="eyebrow" id="stageHint">Esc to close</span>
+      <div class="grow"><button type="button" class="btn" id="stageClose">Close</button></div>
     </div>
   </div>
 </div>
 
 <footer><div class="in">
   <span>Apollo Home Stream</span>
-  <span class="mono">your PC · your games · your network</span>
-  <span style="margin-left:auto" id="footNote">Open this page from the bridge on your gaming PC to see your real library.</span>
+  <span class="mono" id="footNote">your PC · your games · your network</span>
+  <button type="button" id="lockBtn" hidden style="margin-left:auto; color:var(--accent); font-weight:600; font-size:12.5px">Lock this screen</button>
 </div></footer>
 
 <script>
@@ -471,13 +417,6 @@ var $=function(s){return document.querySelector(s)};
 var reduced=window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 var HOST={name:"Gaming station", dns:"gaming-station.local"};
-var SCREENS=[
-  {id:"tv",   name:"Living room TV", prose:"the living room TV", rtt:2},
-  {id:"mac",  name:"Laptop",         prose:"your laptop",        rtt:3},
-  {id:"phone",name:"Phone",          prose:"your phone",         rtt:5},
-  {id:"deck", name:"Steam Deck",     prose:"the Steam Deck",     rtt:5},
-  {id:"road", name:"Away from home", prose:"the screen you have with you", rtt:36}
-];
 function G(id,t,studio,h1,h2,pat,hours){return {id:id,title:t,studio:studio,h1:h1,h2:h2,pat:pat,hours:hours}}
 var GAMES=[
   G("vantage","Vantage Point","Northlight",194,212,1,212),
@@ -494,6 +433,7 @@ var LIVE=false;                    // true once /api/games has answered
 function game(id){ return GAMES.filter(function(g){return String(g.id)===String(id)})[0]||GAMES[0] }
 function ago(ts){
   if(!ts) return "never played";
+  if(ts<946684800) return "long ago";           // Steam sometimes stores junk here for old installs
   var d=(Date.now()/1000-ts)/86400;
   if(d<1) return "today"; if(d<2) return "yesterday";
   if(d<30) return Math.round(d)+" days ago";
@@ -507,22 +447,26 @@ function fromBridge(g){
 }
 function loadLive(){
   if(!window.fetch) return;
-  fetch("/api/games",{cache:"no-store"}).then(function(r){ if(!r.ok) throw 0; return r.json(); }).then(function(d){
+  fetch("/api/games",{cache:"no-store"}).then(function(r){
+    if(r.status===401){ location.replace("/pin?next="+encodeURIComponent(location.pathname+location.search)); throw 0; }
+    if(!r.ok) throw 0; return r.json();
+  }).then(function(d){
     if(!d||!d.games) throw 0;
     LIVE=true;
     GAMES=d.games.slice(0,24).map(fromBridge);
-    if(d.host){ HOST.name=d.host; HOST.dns=d.host; $("#hostText").textContent=HOST.name+" — awake"; }
+    if(d.host){ HOST.name=d.host; HOST.dns=d.host; }
+    $("#hostText").textContent=HOST.name+" · connected"; $("#hostLamp").className="lamp";
     if(!GAMES.length){ GAMES=DEMO; LIVE=false; }
     if(!GAMES.some(function(g){return g.id===S.last})) S.last=GAMES[0].id;
     $("#demoBanner").hidden=LIVE;
+    $("#lockBtn").hidden=!LIVE;
     renderGames(); renderResume();
-  }).catch(function(){ $("#demoBanner").hidden=false; });
+  }).catch(function(){ $("#demoBanner").hidden=false; $("#hostText").textContent="Sample library"; $("#hostLamp").className="lamp off"; });
 }
 
-var S={screen:"tv", last:"vantage", tab:"play", mode:"sleep"};
+var S={last:"vantage", tab:"play", mode:"sleep"};
 try{ var v=JSON.parse(localStorage.getItem("apollo.simple")||"{}"); for(var k in v){ if(k in S) S[k]=v[k]; } }catch(e){}
 function save(){ try{ localStorage.setItem("apollo.simple",JSON.stringify(S)); }catch(e){} }
-function screenOf(){ return SCREENS.filter(function(s){return s.id===S.screen})[0]||SCREENS[0] }
 
 function paint(el,gm,big){
   var a="hsl("+gm.h1+" var(--art-s) var(--art-l))";
@@ -535,49 +479,42 @@ function paint(el,gm,big){
   if(gm.pat===3) layers.unshift("repeating-conic-gradient(from 0deg at 88% 96%, rgba(255,255,255,.06) 0 6deg, transparent 6deg 22deg)");
   el.style.backgroundImage=layers.join(",");
   el.style.backgroundSize="cover";
+  el.classList.add("gen");
   if(big){
     var i=document.createElement("div"); i.className="initial"; i.textContent=gm.title.charAt(0); i.setAttribute("aria-hidden","true");
     el.appendChild(i);
   }
 }
 
-function renderScreens(){
-  var host=$("#screens"); host.innerHTML="";
-  SCREENS.forEach(function(sc){
-    var b=document.createElement("button"); b.className="screen"; b.type="button";
-    b.setAttribute("aria-pressed",String(sc.id===S.screen));
-    b.innerHTML='<span class="dot"></span>'+sc.name;
-    b.addEventListener("click",function(){ S.screen=sc.id; save(); renderScreens(); renderResume(); });
-    host.appendChild(b);
+function cover(el,gm,big){
+  paint(el,gm,big);
+  if(!gm.cover) return;
+  var img=document.createElement("img"); img.alt=""; img.loading="lazy"; img.src=gm.cover;
+  img.addEventListener("load",function(){ el.classList.remove("gen"); });
+  img.addEventListener("error",function(){
+    if(img.src.indexOf("library_600x900")>=0){ img.src=gm.cover.replace("library_600x900","header"); return; }   // older titles only have the wide one
+    img.remove();
   });
+  el.appendChild(img);
 }
 function renderResume(){
-  var gm=game(S.last), sc=screenOf();
+  var gm=game(S.last);
   $("#resumeTitle").textContent=gm.title;
-  $("#resumeSub").textContent = sc.id==="road"
-    ? "Waiting on the "+HOST.name+" back home. It'll stream to you over your VPN — the game itself never leaves the house."
-    : "Still open on the "+HOST.name+". It'll be on "+sc.prose+" in a few seconds.";
-  $("#resumeBtn").textContent="▶ Resume "+gm.title;
-  var art=$("#resumeArt"); art.innerHTML=""; paint(art,gm,false);
-  if(gm.cover){ var im=document.createElement("img"); im.alt=""; im.src=gm.cover; im.style.cssText="position:absolute;inset:0;width:100%;height:100%;object-fit:cover"; im.addEventListener("error",function(){im.remove()}); art.appendChild(im); }
+  $("#resumeSub").textContent = LIVE
+    ? "On "+HOST.name+" · last played "+ago(gm.last)+(gm.size?" · "+(gm.size/1e9).toFixed(gm.size>1e10?0:1)+" GB":"")
+    : "Sample game — run the bridge on your gaming PC to see your own.";
+  $("#resumeBtn").textContent=(LIVE?"▶ Play ":"▶ Play ")+gm.title;
+  var art=$("#resumeArt"); art.innerHTML=""; art.className="rart"; cover(art,gm,false);
 }
 function renderGames(){
   var host=$("#games"); host.innerHTML="";
   GAMES.forEach(function(gm,i){
     var b=document.createElement("button"); b.className="game"; b.type="button";
-    b.setAttribute("aria-label","Play "+gm.title);
-    var art=document.createElement("div"); art.className="art"; paint(art,gm,true);
-    if(gm.cover){
-      var img=document.createElement("img"); img.alt=""; img.loading="lazy"; img.src=gm.header||gm.cover.replace("library_600x900","header");
-      img.addEventListener("error",function(){ img.hidden=true; });
-      art.appendChild(img);
-    }
-    if(i<8){ var k=document.createElement("kbd"); k.textContent=i+1; art.appendChild(k); }
-    var gb=document.createElement("div"); gb.className="gb";
+    b.setAttribute("aria-label","Play "+gm.title+(i<8?" (key "+(i+1)+")":""));
+    var art=document.createElement("div"); art.className="art"; cover(art,gm,true);
     var h=document.createElement("h3"); h.textContent=gm.title;
-    var hrs=document.createElement("span"); hrs.className="hrs"; hrs.textContent=LIVE?ago(gm.last):gm.hours+" h";
-    gb.appendChild(h); gb.appendChild(hrs);
-    b.appendChild(art); b.appendChild(gb);
+    var meta=document.createElement("div"); meta.className="meta"; meta.textContent=LIVE?ago(gm.last):gm.hours+" h played";
+    b.appendChild(art); b.appendChild(h); b.appendChild(meta);
     b.addEventListener("click",function(){ play(gm.id) });
     host.appendChild(b);
   });
@@ -671,28 +608,23 @@ function renderPower(){
 /* ---- launch ---- */
 var seq=null;
 function play(id){
-  var gm=game(id), sc=screenOf();
+  var gm=game(id);
   S.last=id; save(); renderResume();
   $("#launch").hidden=false;
   var art=$("#stageArt");
-  Array.prototype.slice.call(art.querySelectorAll(".initial")).forEach(function(n){n.remove()});
-  paint(art,gm,true);
+  Array.prototype.slice.call(art.querySelectorAll(".initial,img")).forEach(function(n){n.remove()});
+  art.classList.remove("gen"); cover(art,gm,true);
   $("#stageBar").style.width="0%";
-  $("#sPing").textContent=sc.rtt+" ms";
-  $("#sDev").textContent=sc.name;
   var steps=LIVE ? [
-    {s:"Asking "+HOST.name, u:"steam://rungameid/"+gm.appid, p:30},
-    {s:"Starting "+gm.title, u:"on the host — this takes a moment", p:70},
-    {s:"Now open Artemis or Moonlight", u:"pick "+HOST.name+" · "+gm.title+" is on screen there", p:100}
+    {s:"Starting "+gm.title, u:"on "+HOST.name, p:40},
+    {s:"Now open Artemis or Moonlight", u:"pick "+HOST.name+" — "+gm.title+" is on its screen", p:100}
   ] : [
-    {s:"Connecting", u:HOST.dns, p:25},
-    {s:"Starting "+gm.title, u:"on the "+HOST.name, p:55},
-    {s:"Setting up your screen", u:"matching "+sc.prose, p:80},
-    {s:"Streaming", u:gm.title+" — "+sc.name, p:100}
+    {s:"Starting "+gm.title, u:"on "+HOST.name, p:45},
+    {s:"Now open Artemis or Moonlight", u:"this is a sample — nothing was launched", p:100}
   ];
   if(LIVE){
     fetch("/api/launch",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({appid:gm.appid})})
-      .then(function(r){ return r.json().then(function(j){ return {ok:r.ok,j:j}; }); })
+      .then(function(r){ if(r.status===401){ location.replace("/pin"); throw 0; } return r.json().then(function(j){ return {ok:r.ok,j:j}; }); })
       .then(function(x){ if(!x.ok){ clearTimeout(seq); $("#stageStep").textContent="Couldn't start it"; $("#stageSub").textContent=(x.j&&x.j.error)||"the host said no"; $("#stageBar").style.width="100%"; } })
       .catch(function(){ clearTimeout(seq); $("#stageStep").textContent="Host didn't answer"; $("#stageSub").textContent="is the bridge still running on "+HOST.name+"?"; });
   }
@@ -733,6 +665,9 @@ Array.prototype.slice.call(document.querySelectorAll("[data-copy]")).forEach(fun
 $("#tabPlay").addEventListener("click",function(){ setTab("play") });
 $("#tabInstall").addEventListener("click",function(){ setTab("install") });
 $("#tabPower").addEventListener("click",function(){ setTab("power") });
+$("#lockBtn").addEventListener("click",function(){
+  fetch("/api/logout",{method:"POST"}).catch(function(){}).then(function(){ location.replace("/pin"); });
+});
 var gp=$("#gotoPower"); if(gp) gp.addEventListener("click",function(){ setTab("power") });
 $("#modeSleep").addEventListener("click",function(){ S.mode="sleep"; save(); renderPower(); });
 $("#modeAwake").addEventListener("click",function(){ S.mode="awake"; save(); renderPower(); });
@@ -748,7 +683,7 @@ document.addEventListener("keydown",function(e){
 });
 $("#hostText").textContent=HOST.name+" — awake";
 
-renderScreens(); renderGames(); renderResume(); renderPower(); setTab(S.tab); loadLive();
+renderGames(); renderResume(); renderPower(); setTab(S.tab); loadLive();
 })();
 </script>
 </body>
