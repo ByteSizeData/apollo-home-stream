@@ -50,7 +50,8 @@ python.org (tick *Add to PATH*), or `winget install Python.Python.3.12`.
 --port 9000            serve somewhere other than 8777
 --steam "D:\Steam"     if it can't find your Steam folder
 --name "Gaming station"  how the PC is shown in the page
---steam-key KEY        optional Steam Web API key: shows games you own but haven't installed, and your avatar
+--set-steam-key KEY    store your Steam Web API key on this PC once (then omit it; see Your Steam account)
+--steam-key KEY        use a key for this run only; --forget-steam-key removes the stored one
 --pin 4821             change the PIN (default 2550); --pin "" turns the gate off entirely
 --token secret         additionally require an X-Apollo-Token header to launch (see Security)
 --dry-run              print what it found and exit — try this first
@@ -99,21 +100,30 @@ Do **not** port-forward 8777 to the internet. Use Tailscale (the Install tab exp
 
 ## Your Steam account
 
-**Automatic, offline, private.** Steam already keeps a record on this PC of who is signed in
-and how long you've played each game. The bridge reads that, so the page shows your name in
-the corner, real hours on every cover, and "recently played" ordered by when you actually last
-played - across all your machines, since Steam syncs that. Nothing is sent anywhere and there
-is nothing to set up: if you're signed in to Steam on the PC, you're connected.
+**Sync with Steam (recommended).** Give the bridge your Steam Web API key once and the page
+stays in step with Steam itself: what you played last - on *any* device, Deck, laptop, anywhere -
+your total hours, the last two weeks, your avatar, and every game you own but haven't installed
+on this PC (tap a cover to start installing it from the couch). It refreshes every five minutes
+in the background, whether or not you're using Apollo.
 
-**Optional: games you own but haven't installed.** Give the bridge a Steam Web API key and the
-page grows an *Also in your library* shelf - tap a cover and the PC starts installing it, so
-you can queue a download from the couch. It also fetches your avatar.
+1. Get a key at https://steamcommunity.com/dev/apikey (sign in; any domain name is fine, e.g. `localhost`).
+2. On the gaming PC, once:
 
-1. Get a key at https://steamcommunity.com/dev/apikey (any domain name is fine, e.g. `localhost`).
-2. Start the bridge with `--steam-key YOURKEY`, or set `APOLLO_STEAM_KEY=YOURKEY`.
+```
+python bridge/apollo_bridge.py --set-steam-key YOURKEY
+```
 
-The key stays on the PC and is never sent to the page. Because it's *your* key, this works
-even if your Steam profile is private. Both tiers sit behind the PIN like everything else.
+3. Start the bridge normally. The banner says `Steam sync: on`.
+
+The key is stored in `~/.apollo-home-stream/config.json` on the PC, readable only by you. It is
+never sent to the page or anywhere except Steam. Because it's *your* key, syncing works even if
+your Steam profile is private. `--forget-steam-key` removes it.
+
+**Without a key** the bridge still works, from Steam's own record on this PC: who's signed in,
+hours and last-played for installed games, and games you've played here before but since
+uninstalled. That record only knows about this PC, so play on another device won't show up.
+
+Both tiers sit behind the PIN like everything else.
 
 ## Keeping it working
 

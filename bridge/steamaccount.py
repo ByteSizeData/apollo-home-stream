@@ -16,6 +16,7 @@ import urllib.request
 STEAMID64_BASE = 76561197960265728
 WEB_TIMEOUT = 6
 CDN = "https://cdn.cloudflare.steamstatic.com/steam/apps/%d/library_600x900.jpg"
+CACHE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".cache")
 
 
 def parse_vdf(text):
@@ -40,6 +41,38 @@ def _int(v, default=0):
         return int(v)
     except (TypeError, ValueError):
         return default
+
+
+# ----------------------------------------------------------------------------- the key, stored on the PC
+CONFIG_PATH = os.path.join(os.path.expanduser("~"), ".apollo-home-stream", "config.json")
+
+
+def load_config():
+    try:
+        with open(CONFIG_PATH, encoding="utf-8") as f:
+            d = json.load(f)
+        return d if isinstance(d, dict) else {}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def save_config(**values):
+    d = load_config()
+    d.update({k: v for k, v in values.items() if v is not None})
+    os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
+    tmp = CONFIG_PATH + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(d, f, indent=2)
+    os.replace(tmp, CONFIG_PATH)
+    try:
+        os.chmod(CONFIG_PATH, 0o600)               # your eyes only (no-op on Windows)
+    except OSError:
+        pass
+    return CONFIG_PATH
+
+
+def looks_like_key(k):
+    return isinstance(k, str) and len(k) == 32 and all(c in "0123456789ABCDEFabcdef" for c in k)
 
 
 # ----------------------------------------------------------------------------- tier 1: local
@@ -150,6 +183,98 @@ def web_owned(key, steamid64):
              "last_played": _int(g.get("rtime_last_played")), "cover": CDN % g["appid"]} for g in games if "appid" in g]
 
 
+def web_recent(key, steamid64):
+    d = _web("IPlayerService/GetRecentlyPlayedGames/v1/", {"steamid": steamid64}, key)
+    games = (d.get("response") or {}).get("games") or []
+    return {g["appid"]: _int(g.get("playtime_2weeks")) for g in games if "appid" in g}
+
+
+# ----------------------------------------------------------------------------- app names (store lookups, cached forever)
+# Valve retired the keyless "all apps" list, so names come one app at a time from the public store
+# endpoint - no key, no account - and are cached on disk permanently (names don't change).
+STORE_URL = "https://store.steampowered.com/api/appdetails?appids=%d&filters=basic&l=english"
+_names_lock = threading.Lock()
+_names_mem = {}          # appid -> name ("" = looked up, unknown)
+_names_loaded = False
+_names_inflight = set()
+
+
+def _names_path():
+    return os.path.join(CACHE_DIR, "appnames.json")
+
+
+def _names_load():
+    global _names_loaded
+    if _names_loaded:
+        return
+    _names_loaded = True
+    try:
+        with open(_names_path(), encoding="utf-8") as f:
+            for k, v in json.load(f).items():
+                _names_mem[int(k)] = v or ""
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _names_save():
+    try:
+        os.makedirs(CACHE_DIR, exist_ok=True)
+        tmp = _names_path() + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump({str(k): v for k, v in _names_mem.items()}, f)
+        os.replace(tmp, _names_path())
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _store_name(appid):
+    """Name of one app from the public store, or None if it can't be had right now."""
+    req = urllib.request.Request(STORE_URL % appid, headers={"User-Agent": "apollo-home-stream"})
+    def go():
+        with _opener.open(req, timeout=WEB_TIMEOUT) as r:
+            return json.loads(r.read(1024 * 1024))
+    try:
+        d = _bounded(go, WEB_TIMEOUT + 1)
+        entry = d.get(str(appid)) or {}
+        if not entry.get("success"):
+            return ""                                  # delisted / unknown: remember that too
+        return (entry.get("data") or {}).get("name") or ""
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _fill_names(ids):
+    for a in ids:
+        name = _store_name(a)
+        with _names_lock:
+            if name is not None:
+                _names_mem[a] = name
+            _names_inflight.discard(a)
+        time.sleep(0.25)                               # be polite to the store (its limit is ~200 calls / 5 min)
+    with _names_lock:
+        _names_save()
+
+
+def app_names(appids, offline=False, wait=False):
+    """{appid: name} for the ids we know. Unknown ids are fetched from the store in the background
+    (or synchronously when wait=True) and cached forever. Never raises; never blocks unless asked."""
+    want = sorted({int(a) for a in appids})
+    if not want:
+        return {}
+    with _names_lock:
+        _names_load()
+        missing = [a for a in want if a not in _names_mem and a not in _names_inflight]
+        if missing and not offline:
+            _names_inflight.update(missing)
+    if missing and not offline:
+        if wait:
+            _fill_names(missing)
+        else:
+            threading.Thread(target=_fill_names, args=(missing,), daemon=True).start()
+    with _names_lock:
+        return {a: _names_mem[a] for a in want if _names_mem.get(a)}
+
+
 # ----------------------------------------------------------------------------- the account object
 class SteamAccount:
     """Cached view of the signed-in account. `key` is optional and never leaves this process."""
@@ -180,7 +305,11 @@ class SteamAccount:
 
     def _refresh(self, steamid):
         try:
-            w = {"summary": web_summary(self.key, steamid), "owned": web_owned(self.key, steamid)}
+            w = {"summary": web_summary(self.key, steamid), "owned": web_owned(self.key, steamid), "recent": {}}
+            try:
+                w["recent"] = web_recent(self.key, steamid)
+            except Exception:  # noqa: BLE001 - optional detail
+                pass
             self.web_error = None
         except Exception as e:  # noqa: BLE001
             self.web_error = "%s: %s" % (type(e).__name__, str(e)[:120])
@@ -190,7 +319,25 @@ class SteamAccount:
             self._refreshing = False
         return w
 
-    def web(self, max_age=1800, wait=False):
+    REFRESH_EVERY = 300                                  # the page is never more than five minutes behind Steam
+
+    def start_auto_refresh(self):
+        """Keep the web tier current in the background - whether or not anyone opens the page."""
+        if not self.key or self.offline or getattr(self, "_auto", False):
+            return
+        self._auto = True
+        def loop():
+            while True:
+                time.sleep(self.REFRESH_EVERY)
+                try:
+                    self.web(max_age=self.REFRESH_EVERY - 5, wait=True)
+                except Exception:  # noqa: BLE001
+                    pass
+        threading.Thread(target=loop, daemon=True).start()
+
+    def web(self, max_age=None, wait=False):
+        if max_age is None:
+            max_age = self.REFRESH_EVERY
         """{'summary': {...}|None, 'owned': [...]} or None when there's no key / offline.
         Never blocks the caller on the network unless wait=True (and even then only for a bounded time):
         a stale or missing value triggers a background refresh and the last known value is returned."""
@@ -216,7 +363,8 @@ class SteamAccount:
         """What the page is allowed to see. Never includes the key."""
         u = self.user()
         out = {"connected": bool(u), "persona": u.get("persona", "") if u else "", "account": u.get("account", "") if u else "",
-               "steamid": u.get("steamid", "") if u else "", "avatar": "", "source": "local" if u else "none", "web": bool(self.key)}
+               "steamid": u.get("steamid", "") if u else "", "avatar": "", "source": "local" if u else "none", "web": bool(self.key),
+               "names_pending": bool(_names_inflight)}
         w = self.web(wait=True)
         if w and w.get("summary"):
             out["persona"] = w["summary"].get("persona") or out["persona"]
@@ -224,32 +372,58 @@ class SteamAccount:
             out["source"] = "web"
         if self.key and self.web_error:
             out["web_error"] = self.web_error
+        with self._lock:
+            out["web_updated"] = int(self._web[1]) if self._web[0] is not None else 0
         return out
 
     def enrich(self, games):
-        """Add hours (and a better last_played) to the installed-games list, from local data first, web second."""
+        """Hours, last played (and the last two weeks) on the installed-games list.
+        The Web API - which sees every device you play on - wins when it's available; the local record fills gaps."""
         pt = self.playtime()
         w = self.web() or {}
         owned = {g["appid"]: g for g in w.get("owned") or []}
+        recent = w.get("recent") or {}
         for g in games:
-            local = pt.get(g["appid"])
-            minutes = local["minutes"] if local else owned.get(g["appid"], {}).get("minutes", 0)
+            local = pt.get(g["appid"]) or {}
+            web = owned.get(g["appid"]) or {}
+            minutes = max(local.get("minutes", 0), web.get("minutes", 0))
             g["hours"] = round(minutes / 60.0, 1) if minutes else 0
-            lp = max(g.get("last_played", 0), local["last_played"] if local else 0, owned.get(g["appid"], {}).get("last_played", 0))
-            g["last_played"] = lp
+            g["hours_2w"] = round(recent.get(g["appid"], 0) / 60.0, 1) if recent.get(g["appid"]) else 0
+            g["last_played"] = max(g.get("last_played", 0), local.get("last_played", 0), web.get("last_played", 0))
+            g["stats_from"] = "steam" if web else ("pc" if local else "none")
         games.sort(key=lambda g: (-g["last_played"], g["title"].lower()))
         return games
 
-    def owned_not_installed(self, installed_appids, limit=24):
+    def played_before(self, installed_appids, wait=False):
+        """Games with playtime in Steam's local record that aren't installed right now - no key needed."""
+        pt = self.playtime()
+        ids = [a for a, v in pt.items() if a not in installed_appids and (v["minutes"] > 0 or v["last_played"] > 0)]
+        names = app_names(ids, offline=self.offline, wait=wait)
+        return [{"appid": a, "title": names.get(a) or "App %d" % a, "minutes": pt[a]["minutes"], "last_played": pt[a]["last_played"],
+                 "cover": CDN % a, "source": "local"} for a in ids]
+
+    def owned_not_installed(self, installed_appids, limit=24, wait=False):
+        """Past-played games (local record) plus, with a key, everything else you own. Most recent first."""
+        by_id = {g["appid"]: g for g in self.played_before(installed_appids, wait=wait)}
         w = self.web(wait=True)
-        if not w:
-            return []
-        rest = [g for g in w.get("owned") or [] if g["appid"] not in installed_appids]
+        for g in (w.get("owned") if w else None) or []:
+            if g["appid"] in installed_appids:
+                continue
+            cur = by_id.get(g["appid"])
+            if cur is None:
+                by_id[g["appid"]] = dict(g, source="web")
+            else:                                                     # keep the better of the two records
+                cur["title"] = g["title"] or cur["title"]
+                cur["minutes"] = max(cur["minutes"], g["minutes"]); cur["last_played"] = max(cur["last_played"], g["last_played"])
+        rest = list(by_id.values())
         rest.sort(key=lambda g: (-g["last_played"], -g["minutes"], g["title"].lower()))
         for g in rest:
             g["hours"] = round(g["minutes"] / 60.0, 1) if g["minutes"] else 0
         return rest[:limit]
 
     def owns(self, appid):
+        """Installable from this page: in your web library, or something Steam's local record says you've played."""
+        if appid in self.playtime():
+            return True
         w = self.web()
         return bool(w) and any(g["appid"] == appid for g in w.get("owned") or [])

@@ -3,3 +3,6 @@ __pycache__/
 .DS_Store
 .venv/
 *.log
+
+# public Steam app list, cached by the bridge
+.cache/

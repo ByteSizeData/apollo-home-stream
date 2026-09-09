@@ -330,7 +330,7 @@ class Bridge:
     def account_view(self):
         info = self.account.info()
         installed = {g["appid"] for g in self.games()}
-        info["also_owned"] = self.account.owned_not_installed(installed) if self.account.key else []
+        info["also_owned"] = self.account.owned_not_installed(installed)      # past-played games need no key
         return info
 
     def extra_checks(self):
@@ -559,21 +559,39 @@ def main():
     ap.add_argument("--update", action="store_true", help="update this copy from GitHub (git pull, or a verified zip), run the tests, then exit")
     ap.add_argument("--auto-update", action="store_true", default=os.environ.get("APOLLO_AUTO_UPDATE") == "1",
                     help="at startup, apply any available update and restart (or APOLLO_AUTO_UPDATE=1)")
-    ap.add_argument("--steam-key", default=os.environ.get("APOLLO_STEAM_KEY", ""),
-                    help="optional Steam Web API key (steamcommunity.com/dev/apikey): adds games you own but haven't installed, and your avatar")
+    ap.add_argument("--steam-key", default="",
+                    help="Steam Web API key for this run only (steamcommunity.com/dev/apikey). To keep it: --set-steam-key")
+    ap.add_argument("--set-steam-key", metavar="KEY", default=None,
+                    help="store your Steam Web API key on this PC (~/.apollo-home-stream/config.json) and exit; the bridge uses it from then on")
+    ap.add_argument("--forget-steam-key", action="store_true", help="remove the stored Steam Web API key and exit")
     ap.add_argument("--pin", default=os.environ.get("APOLLO_PIN", DEFAULT_PIN),
                     help='4-digit (or longer) PIN needed to open the page and launch games; --pin "" disables')
     ap.add_argument("--token", default=os.environ.get("APOLLO_TOKEN", ""), help="additionally require this X-Apollo-Token header to launch")
     ap.add_argument("--dry-run", action="store_true", help="scan and print, then exit")
     args = ap.parse_args()
+    if args.set_steam_key is not None:
+        key = args.set_steam_key.strip()
+        if not steamaccount.looks_like_key(key):
+            print("that doesn't look like a Steam Web API key (32 hex characters) - get one at https://steamcommunity.com/dev/apikey")
+            sys.exit(2)
+        path = steamaccount.save_config(steam_key=key)
+        print("Steam Web API key saved to %s - start the bridge normally and your library stays in sync with Steam." % path)
+        sys.exit(0)
+    if args.forget_steam_key:
+        steamaccount.save_config(steam_key="")
+        print("Steam Web API key removed."); sys.exit(0)
+
 
     steam = args.steam or (default_steam_paths() or [None])[0]
     if not steam:
         print("Couldn't find Steam. Pass --steam \"C:\\Path\\To\\Steam\".", file=sys.stderr)
         if not args.dry_run:
             print("Serving the page anyway with an empty library.", file=sys.stderr)
-    bridge = Bridge(steam, args.name, args.token, pin=args.pin, steam_key=args.steam_key)
+    steam_key = args.steam_key or os.environ.get("APOLLO_STEAM_KEY", "") or steamaccount.load_config().get("steam_key", "")
+    bridge = Bridge(steam, args.name, args.token, pin=args.pin, steam_key=steam_key)
     bridge.account.offline = args.no_network
+    if steam_key and not args.no_network:
+        bridge.account.start_auto_refresh()
     bridge.port = args.port
     bridge.network = not args.no_network
 
@@ -638,7 +656,9 @@ def main():
         sys.exit(1)
     srv = Server((args.bind, args.port), make_handler(bridge))
     print("Apollo bridge on http://%s:%d  (Steam: %s, %d games)" % (args.name, args.port, steam, len(bridge.games())))
-    print("PIN gate: %s" % ("on" if bridge.gated else "OFF — anyone who can reach this port can launch games"))
+    print("PIN gate: %s" % ("on" if bridge.gated else "OFF - anyone who can reach this port can launch games"))
+    print("Steam sync: %s" % ("on - library and stats refresh from Steam every %d min" % (steamaccount.SteamAccount.REFRESH_EVERY // 60)
+                              if steam_key and not args.no_network else "off - showing this PC's own record (run --set-steam-key KEY to sync)"))
     print("Open that address from any device on your network or tailnet. Ctrl-C to stop.")
     try:
         srv.serve_forever()

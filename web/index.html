@@ -470,7 +470,7 @@ function ago(ts){
 function fromBridge(g){
   var h=(g.appid*2654435761)>>>0;         // stable hues per appid for the fallback art
   return {id:String(g.appid), appid:g.appid, title:g.title, studio:"Steam", h1:h%360, h2:(h>>8)%360, pat:g.appid%4,
-          hours:g.hours||0, last:g.last_played, cover:g.cover, size:g.size_bytes};
+          hours:g.hours||0, hours2w:g.hours_2w||0, last:g.last_played, cover:g.cover, size:g.size_bytes};
 }
 function loadLive(){
   if(!window.fetch) return;
@@ -498,7 +498,10 @@ function showAccount(a){
   Array.prototype.slice.call(box.querySelectorAll(".av,.who")).forEach(function(n){n.remove()});
   if(!a||!a.connected) return;
   if(a.avatar){ var im=document.createElement("img"); im.className="av"; im.alt=""; im.src=a.avatar; im.addEventListener("error",function(){im.remove()}); box.appendChild(im); }
-  var who=document.createElement("span"); who.className="who"; who.textContent=a.persona||a.account; who.title="Steam account on "+HOST.name+(a.source==="web"?" (Web API)":" (from this PC, offline)"); box.appendChild(who);
+  var who=document.createElement("span"); who.className="who"; who.textContent=a.persona||a.account;
+  who.title = a.source==="web" ? "Synced with Steam - stats from every device you play on"+(a.web_updated?" · updated "+ago(a.web_updated).replace("today","just now"):"")
+                               : (a.web ? "Steam key set, but the last sync failed - showing this PC's record" : "From this PC's own Steam record (offline). Run --set-steam-key to sync with Steam.");
+  box.appendChild(who);
 }
 function loadOwned(){
   fetch("/api/account",{cache:"no-store"}).then(function(r){return r.ok?r.json():null}).catch(function(){return null}).then(function(a){
@@ -509,13 +512,17 @@ function loadOwned(){
       var b=document.createElement("button"); b.className="game"; b.type="button"; b.setAttribute("aria-label","Install "+g.title+" on "+HOST.name);
       var art=document.createElement("div"); art.className="art"; cover(art,gm,true);
       var h=document.createElement("h3"); h.textContent=g.title;
-      var meta=document.createElement("div"); meta.className="meta inst"; meta.textContent=(g.hours?g.hours+" h · ":"")+"tap to install";
+      var meta=document.createElement("div"); meta.className="meta inst"; meta.textContent=(g.hours?g.hours+" h · ":"")+(g.last_played?ago(g.last_played)+" · ":"")+"tap to install";
       b.appendChild(art); b.appendChild(h); b.appendChild(meta);
       b.addEventListener("click",function(){ installGame(g); });
       host.appendChild(b);
     });
-    $("#ownedNote").textContent=a.also_owned.length+" not installed on this PC";
+    var played=a.also_owned.filter(function(g){return g.source==="local"}).length;
+    $("#ownedNote").textContent=a.also_owned.length+" not installed on this PC"+(a.web?"":" · played before")+(a.web&&played<a.also_owned.length?" · "+(a.also_owned.length-played)+" never played here":"");
     box.hidden=false;
+    // names are looked up in the background on the PC; ask again a few times while any are still placeholders
+    var pending=a.names_pending || a.also_owned.some(function(g){return /^App \d+$/.test(g.title)});
+    if(pending && (loadOwned.tries=(loadOwned.tries||0)+1)<=4) setTimeout(loadOwned, 4000);
   });
 }
 function installGame(g){
@@ -600,7 +607,7 @@ function renderResume(){
   var gm=game(S.last);
   $("#resumeTitle").textContent=gm.title;
   $("#resumeSub").textContent = LIVE
-    ? "On "+HOST.name+(gm.hours?" · "+gm.hours+" h played":"")+" · last played "+ago(gm.last)+(gm.size?" · "+(gm.size/1e9).toFixed(gm.size>1e10?0:1)+" GB":"")
+    ? "On "+HOST.name+(gm.hours?" · "+gm.hours+" h played":"")+(gm.hours2w?" · "+gm.hours2w+" h in the last two weeks":"")+" · last played "+ago(gm.last)+(gm.size?" · "+(gm.size/1e9).toFixed(gm.size>1e10?0:1)+" GB":"")
     : "Sample game — run the bridge on your gaming PC to see your own.";
   $("#resumeBtn").textContent=(LIVE?"▶ Play ":"▶ Play ")+gm.title;
   var art=$("#resumeArt"); art.innerHTML=""; art.className="rart"; cover(art,gm,false);

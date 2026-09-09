@@ -104,6 +104,16 @@ class Local(unittest.TestCase):
 
 
 class WebTier(unittest.TestCase):
+    def setUp(self):
+        self.cache = tempfile.mkdtemp()
+        self.ps = [mock.patch.object(sa, "CACHE_DIR", self.cache), mock.patch.object(sa, "_store_name", lambda a: None)]
+        for p in self.ps: p.start()
+        sa._names_mem.clear(); sa._names_inflight.clear(); sa._names_loaded = False
+
+    def tearDown(self):
+        for p in self.ps: p.stop()
+        sa._names_mem.clear(); sa._names_inflight.clear(); sa._names_loaded = False
+
     def fake_web(self, summary=True, owned=True, fail=False):
         def _web(path, params, key, timeout=6):
             self.assertEqual(key, "SECRETKEY")
@@ -126,8 +136,8 @@ class WebTier(unittest.TestCase):
             self.assertEqual((info["source"], info["persona"], info["avatar"], info["web"]), ("web", "Drift (web)", "https://avatars.example/a.jpg", True))
             self.assertNotIn("SECRETKEY", json.dumps(info))
             rest = acct.owned_not_installed({413150})
-            self.assertEqual([g["title"] for g in rest], ["Dota 2", "Portal 2"])
-            self.assertEqual(rest[0]["hours"], 1.5)
+            self.assertEqual([g["title"] for g in rest], ["App 1091500", "Dota 2", "Portal 2"])   # local past-played first (most recent), then web
+            self.assertEqual(rest[1]["hours"], 1.5)
             self.assertTrue(acct.owns(570)); self.assertFalse(acct.owns(413150 + 1))
 
     def test_web_failure_is_remembered_not_raised_and_local_still_works(self):
@@ -137,7 +147,7 @@ class WebTier(unittest.TestCase):
             info = acct.info()
             self.assertEqual((info["source"], info["persona"]), ("local", "ByteSizeDrift"))
             self.assertIn("OSError", info["web_error"])
-            self.assertEqual(acct.owned_not_installed(set()), [])
+            self.assertEqual([g["source"] for g in acct.owned_not_installed(set())], ["local", "local"])   # the local record still works
             self.assertFalse(acct.owns(570))
 
 
@@ -163,12 +173,16 @@ class ThroughTheBridge(unittest.TestCase):
             return {"response": {"games": [{"appid": 413150, "name": "Stardew Valley", "playtime_forever": 4440, "rtime_last_played": 1788100000},
                                             {"appid": 570, "name": "Dota 2", "playtime_forever": 90, "rtime_last_played": 1600000000}]}}
         cls.webpatch = mock.patch.object(sa, "_web", _web); cls.webpatch.start()
+        cls.cachedir = tempfile.mkdtemp()
+        cls.cachepatch = mock.patch.object(sa, "CACHE_DIR", cls.cachedir); cls.cachepatch.start()
+        cls.dlpatch = mock.patch.object(sa, "_store_name", lambda a: None); cls.dlpatch.start()
+        sa._names_mem.clear(); sa._names_inflight.clear(); sa._names_loaded = False
         cls.srv = ThreadingHTTPServer(("127.0.0.1", 0), ab.make_handler(cls.bridge)); cls.port = cls.srv.server_address[1]
         threading.Thread(target=cls.srv.serve_forever, daemon=True).start()
 
     @classmethod
     def tearDownClass(cls):
-        cls.srv.shutdown(); cls.srv.server_close(); cls.webpatch.stop(); cls.tmp.cleanup()
+        cls.srv.shutdown(); cls.srv.server_close(); cls.webpatch.stop(); cls.cachepatch.stop(); cls.dlpatch.stop(); cls.tmp.cleanup()
 
     def req(self, method, path, body=None, cookie=None):
         import http.client
@@ -196,7 +210,7 @@ class ThroughTheBridge(unittest.TestCase):
         self.assertEqual(d["account"]["persona"], "Drift")
         self.assertNotIn("SECRETKEY", json.dumps(d))
         st, a, _ = self.req("GET", "/api/account", cookie=tok)
-        self.assertEqual([g["title"] for g in a["also_owned"]], ["Dota 2"])
+        self.assertEqual([g["title"] for g in a["also_owned"]], ["App 1091500", "Dota 2"])
         self.assertNotIn("SECRETKEY", json.dumps(a))
 
     def test_install_only_for_owned_games(self):
@@ -249,7 +263,8 @@ class Hardening(unittest.TestCase):
             with open(os.path.join(root, "steamapps", "appmanifest_413150.acf"), "w") as f:
                 f.write('"AppState"\n{\n\t"appid"\t\t"413150"\n\t"name"\t\t"Stardew Valley"\n\t"StateFlags"\t\t"4"\n}\n')
             bridge = ab.Bridge(root, "h", "", pin="")
-            with mock.patch.object(bridge.account, "info", side_effect=RuntimeError("boom")):   # even if info() itself explodes
+            with mock.patch.object(bridge.account, "info", side_effect=RuntimeError("boom")), mock.patch.object(sa, "_store_name", lambda a: None), \
+                 mock.patch.object(sa, "CACHE_DIR", os.path.join(root, ".cache")):   # even if info() itself explodes
                 srv = ThreadingHTTPServer(("127.0.0.1", 0), ab.make_handler(bridge)); threading.Thread(target=srv.serve_forever, daemon=True).start()
                 try:
                     for path in ("/api/games", "/api/account"):
@@ -298,3 +313,157 @@ class Hardening(unittest.TestCase):
         with self.assertRaises(TimeoutError):
             sa._bounded(lambda: time.sleep(5), 0.3)          # what a hung getaddrinfo looks like
         self.assertLess(time.time() - t, 1.5)
+
+
+class PlayedBefore(unittest.TestCase):
+    """Past games from Steam's local record, no key needed; names from the public store, cached forever."""
+
+    LOCAL = '''"UserLocalConfigStore" { "Software" { "Valve" { "Steam" { "apps"
+    {
+        "413150" { "LastPlayed" "1788100000"  "Playtime" "4440" }
+        "570"    { "LastPlayed" "1750000000"  "Playtime" "90" }
+        "620"    { "LastPlayed" "1690000000"  "Playtime" "1200" }
+        "999"    { "LastPlayed" "0"           "Playtime" "0" }
+    } } } } }'''
+    NAMES = {570: "Dota 2", 620: "Portal 2"}
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        make_root(self.tmp, local=self.LOCAL)
+        self.cache = os.path.join(self.tmp, ".cache")
+        self.calls = []
+        def store(appid):
+            self.calls.append(appid); return self.NAMES.get(appid, "")
+        self.ps = [mock.patch.object(sa, "CACHE_DIR", self.cache), mock.patch.object(sa, "_store_name", store), mock.patch.object(sa.time, "sleep", lambda s: None)]
+        for p in self.ps: p.start()
+        sa._names_mem.clear(); sa._names_inflight.clear(); sa._names_loaded = False
+
+    def tearDown(self):
+        for p in self.ps: p.stop()
+        sa._names_mem.clear(); sa._names_inflight.clear(); sa._names_loaded = False
+        import shutil; shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_played_before_lists_uninstalled_games_with_names_hours_and_dates(self):
+        rest = sa.SteamAccount(self.tmp).owned_not_installed({413150}, wait=True)
+        self.assertEqual([(g["title"], g["hours"], g["source"]) for g in rest], [("Dota 2", 1.5, "local"), ("Portal 2", 20.0, "local")])
+        self.assertNotIn(999, [g["appid"] for g in rest])                 # never played -> not "played before"
+        self.assertEqual(sorted(self.calls), [570, 620])
+        self.assertTrue(os.path.exists(os.path.join(self.cache, "appnames.json")))
+        # a fresh process (memory cleared) reads the disk cache and asks the store nothing
+        sa._names_mem.clear(); sa._names_loaded = False
+        sa.SteamAccount(self.tmp).owned_not_installed({413150}, wait=True)
+        self.assertEqual(sorted(self.calls), [570, 620])
+
+    def test_background_fill_returns_placeholders_first_then_names(self):
+        import threading, time
+        gate = threading.Event()                                           # the store "answers" only when we say so
+        def gated(appid):
+            gate.wait(5); return self.NAMES.get(appid, "")
+        acct = sa.SteamAccount(self.tmp)
+        with mock.patch.object(sa, "_store_name", gated):
+            t0 = time.time(); first = acct.owned_not_installed({413150})   # non-blocking: placeholders now...
+            self.assertLess(time.time() - t0, 0.5)
+            self.assertEqual([g["title"] for g in first], ["App 570", "App 620"])
+            gate.set()
+            for _ in range(100):
+                if not sa._names_inflight: break
+                threading.Event().wait(0.02)
+        self.assertEqual([g["title"] for g in acct.owned_not_installed({413150})], ["Dota 2", "Portal 2"])   # ...real names next time
+
+    def test_offline_never_asks_the_store(self):
+        rest = sa.SteamAccount(self.tmp, offline=True).owned_not_installed({413150}, wait=True)
+        self.assertEqual(self.calls, []); self.assertEqual([g["title"] for g in rest], ["App 570", "App 620"])
+
+    def test_store_failure_is_silent_and_retried_later(self):
+        with mock.patch.object(sa, "_store_name", lambda a: None):
+            rest = sa.SteamAccount(self.tmp).owned_not_installed({413150}, wait=True)
+        self.assertEqual([g["title"] for g in rest], ["App 570", "App 620"])
+        self.assertEqual(sa._names_inflight, set())                        # nothing stuck "in flight"
+        rest = sa.SteamAccount(self.tmp).owned_not_installed({413150}, wait=True)   # store back: names fill in
+        self.assertEqual([g["title"] for g in rest], ["Dota 2", "Portal 2"])
+
+    def test_web_tier_merges_with_local_record(self):
+        def _web(path, params, key, timeout=6):
+            if "GetPlayerSummaries" in path:
+                return {"response": {"players": []}}
+            return {"response": {"games": [{"appid": 620, "name": "Portal 2 (web)", "playtime_forever": 1300, "rtime_last_played": 1700000000},
+                                            {"appid": 730, "name": "Counter-Strike 2", "playtime_forever": 0, "rtime_last_played": 0}]}}
+        with mock.patch.object(sa, "_web", _web):
+            acct = sa.SteamAccount(self.tmp, key="K")
+            rest = acct.owned_not_installed({413150}, wait=True)
+            self.assertEqual([(g["title"], g["minutes"]) for g in rest], [("Dota 2", 90), ("Portal 2 (web)", 1300), ("Counter-Strike 2", 0)])
+            self.assertTrue(acct.owns(570)); self.assertTrue(acct.owns(730)); self.assertFalse(acct.owns(4242))
+
+    def test_account_view_lists_past_games_without_a_key(self):
+        os.makedirs(os.path.join(self.tmp, "steamapps"))
+        with open(os.path.join(self.tmp, "steamapps", "appmanifest_413150.acf"), "w") as f:
+            f.write('"AppState"\n{\n\t"appid"\t\t"413150"\n\t"name"\t\t"Stardew Valley"\n\t"StateFlags"\t\t"4"\n}\n')
+        view = ab.Bridge(self.tmp, "h", "", pin="").account_view()            # no steam_key at all
+        self.assertEqual([g["appid"] for g in view["also_owned"]], [570, 620])
+
+    def test_played_before_games_can_be_installed_without_a_key(self):
+        self.assertTrue(sa.SteamAccount(self.tmp).owns(570))
+        self.assertFalse(sa.SteamAccount(self.tmp).owns(4242))
+
+
+class SteamSync(unittest.TestCase):
+    """0.4.0: the key lives on the PC, Steam is the source of truth, and it refreshes on its own."""
+
+    def setUp(self):
+        self.home = tempfile.mkdtemp()
+        self.p = mock.patch.object(sa, "CONFIG_PATH", os.path.join(self.home, ".apollo-home-stream", "config.json")); self.p.start()
+
+    def tearDown(self):
+        self.p.stop()
+        import shutil; shutil.rmtree(self.home, ignore_errors=True)
+
+    def test_key_validation(self):
+        self.assertTrue(sa.looks_like_key("0123456789ABCDEF0123456789abcdef"))
+        for bad in ("", "short", "0123456789ABCDEF0123456789abcdeg", 42, None, "0123456789ABCDEF0123456789abcdef0"):
+            self.assertFalse(sa.looks_like_key(bad), repr(bad))
+
+    def test_config_round_trip_and_permissions(self):
+        path = sa.save_config(steam_key="0123456789ABCDEF0123456789abcdef")
+        self.assertEqual(sa.load_config()["steam_key"], "0123456789ABCDEF0123456789abcdef")
+        if os.name != "nt":
+            self.assertEqual(oct(os.stat(path).st_mode & 0o777), "0o600")
+        sa.save_config(steam_key="")
+        self.assertEqual(sa.load_config()["steam_key"], "")
+        self.assertEqual(sa.load_config().get("nothing"), None)
+
+    def test_set_and_forget_via_cli(self):
+        import subprocess
+        env = dict(os.environ, HOME=self.home, USERPROFILE=self.home)
+        script = os.path.join(os.path.dirname(__file__), "..", "bridge", "apollo_bridge.py")
+        r = subprocess.run([sys.executable, script, "--set-steam-key", "nope"], capture_output=True, text=True, env=env)
+        self.assertEqual(r.returncode, 2); self.assertIn("doesn't look like", r.stdout)
+        r = subprocess.run([sys.executable, script, "--set-steam-key", "0123456789ABCDEF0123456789abcdef"], capture_output=True, text=True, env=env)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr); self.assertIn("saved", r.stdout)
+        self.assertNotIn("0123456789ABCDEF0123456789abcdef", r.stdout)     # never echoed
+        cfg = os.path.join(self.home, ".apollo-home-stream", "config.json")
+        self.assertEqual(json.load(open(cfg))["steam_key"], "0123456789ABCDEF0123456789abcdef")
+        r = subprocess.run([sys.executable, script, "--forget-steam-key"], capture_output=True, text=True, env=env)
+        self.assertEqual(r.returncode, 0); self.assertEqual(json.load(open(cfg))["steam_key"], "")
+
+    def test_steam_wins_over_the_local_record_and_adds_two_weeks(self):
+        def _web(path, params, key, timeout=6):
+            if "GetPlayerSummaries" in path: return {"response": {"players": []}}
+            if "GetRecentlyPlayedGames" in path: return {"response": {"games": [{"appid": 413150, "playtime_2weeks": 150}]}}
+            return {"response": {"games": [{"appid": 413150, "name": "Stardew Valley", "playtime_forever": 9000, "rtime_last_played": 1789000000}]}}
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(sa, "_web", _web):
+            make_root(d)                                                     # local says 4440 min / 1788100000
+            acct = sa.SteamAccount(d, key="K"); acct.web(wait=True)
+            games = acct.enrich([{"appid": 413150, "title": "Stardew", "last_played": 5}])
+            g = games[0]
+            self.assertEqual((g["hours"], g["hours_2w"], g["last_played"], g["stats_from"]), (150.0, 2.5, 1789000000, "steam"))
+            self.assertGreater(acct.info()["web_updated"], 0)
+
+    def test_auto_refresh_only_starts_with_a_key_and_online(self):
+        with tempfile.TemporaryDirectory() as d:
+            make_root(d)
+            started = []
+            with mock.patch.object(sa.threading, "Thread", lambda **k: started.append(k) or mock.Mock()):
+                sa.SteamAccount(d).start_auto_refresh(); sa.SteamAccount(d, key="K", offline=True).start_auto_refresh()
+                self.assertEqual(started, [])
+                a = sa.SteamAccount(d, key="K"); a.start_auto_refresh(); a.start_auto_refresh()
+                self.assertEqual(len(started), 1)                              # one loop, not one per call
