@@ -57,6 +57,18 @@ class Health(unittest.TestCase):
             h2 = selfcare.health(FakeBridge(None), port=0, network=False)
             self.assertEqual(h2["status"], "fail")
 
+    def test_running_bridge_does_not_warn_about_its_own_port(self):
+        import socket
+        s = socket.socket(); s.bind(("0.0.0.0", 0)); s.listen(1)
+        try:
+            with tempfile.TemporaryDirectory() as d, mock.patch.object(selfcare, "check_apollo", lambda: selfcare._c("apollo host", True, "x")), \
+                 mock.patch.object(selfcare, "check_tailscale", lambda: selfcare._c("tailscale", True, "x")):
+                port = s.getsockname()[1]
+                self.assertEqual(selfcare.health(FakeBridge(d, [1]), port=port, network=False)["status"], "warn")            # a stranger holds it
+                self.assertEqual(selfcare.health(FakeBridge(d, [1]), port=port, network=False, serving=True)["status"], "ok")  # we hold it
+        finally:
+            s.close()
+
     def test_report_prints_every_row(self):
         h = {"version": "9.9", "sha": "abc", "status": "ok", "checks": [{"name": "a", "status": "ok", "detail": "fine"}, {"name": "b", "status": "warn", "detail": "meh"}]}
         buf = io.StringIO()

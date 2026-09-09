@@ -112,8 +112,9 @@ def _c(name, ok, detail, fail=True):
     return {"name": name, "status": "ok" if ok else ("fail" if fail else "warn"), "detail": detail}
 
 
-def health(bridge, port=8777, network=True, allow_missing_steam=False):
-    checks = [check_python(), check_files(), check_steam(bridge, allow_missing_steam), check_port(port), check_apollo(), check_tailscale()]
+def health(bridge, port=8777, network=True, allow_missing_steam=False, serving=False):
+    port_check = _c("port %d" % port, True, "serving") if serving else check_port(port)   # the running bridge owns its own port
+    checks = [check_python(), check_files(), check_steam(bridge, allow_missing_steam), port_check, check_apollo(), check_tailscale()]
     if network:
         checks += check_internet()
     worst = "ok"

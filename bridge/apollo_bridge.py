@@ -259,7 +259,7 @@ class Bridge:
         now = time.time()
         h = getattr(self, "_health", None)
         if not h or now - h[1] > 30:
-            h = (selfcare.health(self, port=self.port, network=self.network), now)
+            h = (selfcare.health(self, port=self.port, network=self.network, serving=True), now)
             self._health = h
         return h[0]
 
