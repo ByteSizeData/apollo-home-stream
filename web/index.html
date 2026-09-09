@@ -136,6 +136,14 @@ h2.sec{font-family:"Archivo",sans-serif; font-stretch:116%; font-weight:700; fon
 .conn .upd{margin-left:auto; color:var(--accent); font-weight:600}
 .conn .upd code{font-family:"IBM Plex Mono",monospace; font-size:11.5px; background:var(--panel-2); border:1px solid var(--line-soft); border-radius:4px; padding:1px 6px; color:var(--text)}
 
+/* ---- steam account ---- */
+.host img.av{width:22px; height:22px; border-radius:50%; object-fit:cover; border:1px solid var(--line); margin-left:6px}
+.host .who{color:var(--text); font-weight:600; margin-left:4px}
+.owned{margin-top:38px}
+.owned .sec{display:flex; align-items:baseline; gap:12px}
+.owned .sec small{font-family:"IBM Plex Mono",monospace; font-size:11px; color:var(--dim); text-transform:none; letter-spacing:0; font-weight:400}
+.game .meta.inst{color:var(--accent)}
+
 /* ---- install ---- */
 .stepnum{
   display:inline-grid; place-items:center; width:26px; height:26px; border-radius:50%; flex:none;
@@ -260,6 +268,11 @@ footer .in{max-width:1180px; margin:0 auto; display:flex; gap:16px; flex-wrap:wr
 
   <h2 class="sec">Recently played</h2>
   <div class="games" id="games" style="margin-top:16px"></div>
+
+  <div class="owned" id="owned" hidden>
+    <h2 class="sec">Also in your library <small id="ownedNote">not installed on this PC</small></h2>
+    <div class="games" id="ownedGames" style="margin-top:16px"></div>
+  </div>
 </div>
 
 <!-- ============ INSTALL ============ -->
@@ -457,7 +470,7 @@ function ago(ts){
 function fromBridge(g){
   var h=(g.appid*2654435761)>>>0;         // stable hues per appid for the fallback art
   return {id:String(g.appid), appid:g.appid, title:g.title, studio:"Steam", h1:h%360, h2:(h>>8)%360, pat:g.appid%4,
-          hours:0, last:g.last_played, cover:g.cover, size:g.size_bytes};
+          hours:g.hours||0, last:g.last_played, cover:g.cover, size:g.size_bytes};
 }
 function loadLive(){
   if(!window.fetch) return;
@@ -470,15 +483,54 @@ function loadLive(){
     GAMES=d.games.slice(0,24).map(fromBridge);
     if(d.host){ HOST.name=d.host; HOST.dns=d.host; }
     $("#hostText").textContent=HOST.name+" · connected"; $("#hostLamp").className="lamp";
+    showAccount(d.account);
     $("#lockBtn").hidden=false;                       // connected → you can lock, even if the library is empty
     if(!GAMES.length){ GAMES=DEMO; LIVE=false; }
     if(!GAMES.some(function(g){return g.id===S.last})) S.last=GAMES[0].id;
     $("#demoBanner").hidden=LIVE;
     var cb=$("#conn"); cb.hidden=false; cb.innerHTML='<span class="eyebrow">Connections</span><span class="c" style="color:var(--dim)">checking...</span>';
-    renderGames(); renderResume(); loadHealth();
+    renderGames(); renderResume(); loadHealth(); loadOwned();
   }).catch(function(){ $("#demoBanner").hidden=false; $("#hostText").textContent="Sample library"; $("#hostLamp").className="lamp off"; });
 }
 
+function showAccount(a){
+  var box=$("#hostBox"); if(!box) return;
+  Array.prototype.slice.call(box.querySelectorAll(".av,.who")).forEach(function(n){n.remove()});
+  if(!a||!a.connected) return;
+  if(a.avatar){ var im=document.createElement("img"); im.className="av"; im.alt=""; im.src=a.avatar; im.addEventListener("error",function(){im.remove()}); box.appendChild(im); }
+  var who=document.createElement("span"); who.className="who"; who.textContent=a.persona||a.account; who.title="Steam account on "+HOST.name+(a.source==="web"?" (Web API)":" (from this PC, offline)"); box.appendChild(who);
+}
+function loadOwned(){
+  fetch("/api/account",{cache:"no-store"}).then(function(r){return r.ok?r.json():null}).catch(function(){return null}).then(function(a){
+    var box=$("#owned"); if(!a||!a.also_owned||!a.also_owned.length){ box.hidden=true; return; }
+    var host=$("#ownedGames"); host.innerHTML="";
+    a.also_owned.forEach(function(g){
+      var gm={id:"own"+g.appid, appid:g.appid, title:g.title, h1:(g.appid*2654435761>>>0)%360, h2:((g.appid*2654435761>>>0)>>8)%360, pat:g.appid%4, cover:g.cover, hours:g.hours, last:g.last_played};
+      var b=document.createElement("button"); b.className="game"; b.type="button"; b.setAttribute("aria-label","Install "+g.title+" on "+HOST.name);
+      var art=document.createElement("div"); art.className="art"; cover(art,gm,true);
+      var h=document.createElement("h3"); h.textContent=g.title;
+      var meta=document.createElement("div"); meta.className="meta inst"; meta.textContent=(g.hours?g.hours+" h · ":"")+"tap to install";
+      b.appendChild(art); b.appendChild(h); b.appendChild(meta);
+      b.addEventListener("click",function(){ installGame(g); });
+      host.appendChild(b);
+    });
+    $("#ownedNote").textContent=a.also_owned.length+" not installed on this PC";
+    box.hidden=false;
+  });
+}
+function installGame(g){
+  $("#launch").hidden=false;
+  var art=$("#stageArt"); Array.prototype.slice.call(art.querySelectorAll(".initial,img")).forEach(function(n){n.remove()});
+  art.classList.remove("gen"); cover(art,{title:g.title,h1:0,h2:200,pat:1,cover:g.cover},true);
+  $("#stageBar").style.width="30%"; $("#stageStep").textContent="Asking Steam to install "+g.title; $("#stageSub").textContent="on "+HOST.name;
+  fetch("/api/launch",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({appid:g.appid,action:"install"})})
+    .then(function(r){ if(r.status===401){ location.replace("/pin"); throw 0; } return r.json().then(function(j){ return {ok:r.ok,j:j}; }); })
+    .then(function(x){
+      $("#stageBar").style.width="100%";
+      if(x.ok){ $("#stageStep").textContent="Installing on "+HOST.name; $("#stageSub").textContent="Steam is downloading it - it'll show up under Recently played when it's done"; }
+      else { $("#stageStep").textContent="Couldn't start the install"; $("#stageSub").textContent=(x.j&&x.j.error)||"the host said no"; }
+    }).catch(function(){ $("#stageStep").textContent="Host didn't answer"; $("#stageSub").textContent="is the bridge still running on "+HOST.name+"?"; });
+}
 function loadHealth(){
   var box=$("#conn"); if(!box) return;
   var wanted={"steam":"Steam","apollo host":"Apollo","tailscale":"Tailscale","steam cdn":"Cover art","github":"Updates"};
@@ -548,7 +600,7 @@ function renderResume(){
   var gm=game(S.last);
   $("#resumeTitle").textContent=gm.title;
   $("#resumeSub").textContent = LIVE
-    ? "On "+HOST.name+" · last played "+ago(gm.last)+(gm.size?" · "+(gm.size/1e9).toFixed(gm.size>1e10?0:1)+" GB":"")
+    ? "On "+HOST.name+(gm.hours?" · "+gm.hours+" h played":"")+" · last played "+ago(gm.last)+(gm.size?" · "+(gm.size/1e9).toFixed(gm.size>1e10?0:1)+" GB":"")
     : "Sample game — run the bridge on your gaming PC to see your own.";
   $("#resumeBtn").textContent=(LIVE?"▶ Play ":"▶ Play ")+gm.title;
   var art=$("#resumeArt"); art.innerHTML=""; art.className="rart"; cover(art,gm,false);
@@ -560,7 +612,7 @@ function renderGames(){
     b.setAttribute("aria-label","Play "+gm.title+(i<8?" (key "+(i+1)+")":""));
     var art=document.createElement("div"); art.className="art"; cover(art,gm,true);
     var h=document.createElement("h3"); h.textContent=gm.title;
-    var meta=document.createElement("div"); meta.className="meta"; meta.textContent=LIVE?ago(gm.last):gm.hours+" h played";
+    var meta=document.createElement("div"); meta.className="meta"; meta.textContent=LIVE?((gm.hours?gm.hours+" h · ":"")+ago(gm.last)):gm.hours+" h played";
     b.appendChild(art); b.appendChild(h); b.appendChild(meta);
     b.addEventListener("click",function(){ play(gm.id) });
     host.appendChild(b);

@@ -34,6 +34,7 @@ from http.cookies import SimpleCookie
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import selfcare  # noqa: E402  (health checks, self-test, self-update)
+import steamaccount  # noqa: E402  (who's signed in, hours played, optional Web API)
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
@@ -181,6 +182,16 @@ def scan_games(steam_root):
     return games
 
 
+def launch_url(url):
+    """Open a steam:// URL on this PC (install, rungameid, ...)."""
+    if platform.system() == "Windows":
+        os.startfile(url)  # noqa: S606 - a steam:// URL, handled by Steam
+    elif platform.system() == "Darwin":
+        subprocess.Popen(["open", url])
+    else:
+        subprocess.Popen(["xdg-open", url])
+
+
 def launch_appid(appid):
     """Ask Steam on this machine to start the game."""
     url = "steam://rungameid/%d" % appid
@@ -195,8 +206,9 @@ def launch_appid(appid):
 
 # --------------------------------------------------------------------------- #
 class Bridge:
-    def __init__(self, steam_root, host_name, token, pin=DEFAULT_PIN):
+    def __init__(self, steam_root, host_name, token, pin=DEFAULT_PIN, steam_key=""):
         self.steam_root = steam_root
+        self.account = steamaccount.SteamAccount(steam_root, steam_key)
         self.host_name = host_name
         self.token = token
         self.pin = str(pin or "")
@@ -261,6 +273,11 @@ class Bridge:
             h = getattr(self, "_health", None)
             if not h or time.time() - h[1] > 30:
                 data = selfcare.health(self, port=self.port, network=self.network, serving=True)
+                try:
+                    data["checks"][3:3] = self.extra_checks()          # right after the steam row
+                    data["status"] = selfcare._rollup(data["checks"])
+                except Exception:  # noqa: BLE001
+                    pass
                 h = (data, time.time())                        # stamped when it FINISHED, so a slow check isn't instantly stale
                 self._health = h
             return h[0]
@@ -282,8 +299,27 @@ class Bridge:
         cached, when = self._cache
         if time.time() - when > max_age:
             cached = scan_games(self.steam_root) if self.steam_root else []
+            try:
+                self.account.enrich(cached)
+            except Exception as e:  # noqa: BLE001 - account data is a bonus, never a blocker
+                print("steam account: couldn't read playtime (%s)" % e)
             self._cache = (cached, time.time())
         return cached
+
+    def account_view(self):
+        info = self.account.info()
+        installed = {g["appid"] for g in self.games()}
+        info["also_owned"] = self.account.owned_not_installed(installed) if self.account.key else []
+        return info
+
+    def extra_checks(self):
+        info = self.account.info()
+        checks = [selfcare._c("steam account", info["connected"], ("signed in as %s" % info["persona"]) if info["connected"] else "no Steam login found on this PC (open Steam and sign in once)", fail=False)]
+        if self.account.key:
+            self.account.web()
+            err = self.account.web_error
+            checks.append(selfcare._c("steam web api", not err, "library and avatar fetched" if not err else "key set but the call failed: " + err, fail=False))
+        return checks
 
     def host(self):
         return {
@@ -369,7 +405,9 @@ def make_handler(bridge):
                     return self._json(401, {"error": "pin required"})
                 return self._redirect_to_pin(path)        # any page: go to the PIN screen
             if path == "/api/games":
-                return self._json(200, {"games": bridge.games(), "host": bridge.host_name})
+                return self._json(200, {"games": bridge.games(), "host": bridge.host_name, "account": bridge.account.info()})
+            if path == "/api/account":
+                return self._json(200, bridge.account_view())
             if path == "/api/host":
                 return self._json(200, bridge.host())
             if path == "/api/health":
@@ -435,6 +473,16 @@ def make_handler(bridge):
                 appid = 0
             if not appid:
                 return self._json(400, {"error": "appid required"})
+            action = (body.get("action") if isinstance(body, dict) else None) or "run"
+            if action == "install":
+                if not bridge.account.owns(appid):
+                    return self._json(403, {"error": "that isn't in your Steam library"})
+                try:
+                    launch_url("steam://install/%d" % appid)
+                except Exception as e:  # noqa: BLE001
+                    self.log_message("install of %d failed: %s", appid, e)
+                    return self._json(500, {"error": "the host couldn't start the install - check the bridge window"})
+                return self._json(200, {"ok": True, "appid": appid, "action": "install"})
             known = {g["appid"]: g for g in bridge.games()}
             if appid not in known:  # only launch what's actually installed here
                 return self._json(404, {"error": "not installed on this host"})
@@ -489,6 +537,8 @@ def main():
     ap.add_argument("--update", action="store_true", help="update this copy from GitHub (git pull, or a verified zip), run the tests, then exit")
     ap.add_argument("--auto-update", action="store_true", default=os.environ.get("APOLLO_AUTO_UPDATE") == "1",
                     help="at startup, apply any available update and restart (or APOLLO_AUTO_UPDATE=1)")
+    ap.add_argument("--steam-key", default=os.environ.get("APOLLO_STEAM_KEY", ""),
+                    help="optional Steam Web API key (steamcommunity.com/dev/apikey): adds games you own but haven't installed, and your avatar")
     ap.add_argument("--pin", default=os.environ.get("APOLLO_PIN", DEFAULT_PIN),
                     help='4-digit (or longer) PIN needed to open the page and launch games; --pin "" disables')
     ap.add_argument("--token", default=os.environ.get("APOLLO_TOKEN", ""), help="additionally require this X-Apollo-Token header to launch")
@@ -500,12 +550,14 @@ def main():
         print("Couldn't find Steam. Pass --steam \"C:\\Path\\To\\Steam\".", file=sys.stderr)
         if not args.dry_run:
             print("Serving the page anyway with an empty library.", file=sys.stderr)
-    bridge = Bridge(steam, args.name, args.token, pin=args.pin)
+    bridge = Bridge(steam, args.name, args.token, pin=args.pin, steam_key=args.steam_key)
     bridge.port = args.port
     bridge.network = not args.no_network
 
     if args.self_test:
         rep = selfcare.self_test(bridge, port=args.port, network=not args.no_network, allow_missing_steam=args.allow_missing_steam)
+        rep["checks"][3:3] = bridge.extra_checks()
+        rep["status"] = selfcare._rollup(rep["checks"])
         selfcare.print_report(rep)
         sys.exit(0 if rep["status"] != "fail" else 1)
     if args.check_update:
@@ -536,11 +588,14 @@ def main():
 
     if args.dry_run:
         print("Steam:", steam)
+        u = bridge.account.user()
+        print("Account:", ("%s (%s)" % (u["persona"], u["account"])) if u else "nobody signed in on this PC",
+              "- Web API key set" if args.steam_key else "- no Web API key (optional)")
         for lib in bridge.host()["libraries"]:
             print("Library:", lib)
         for g in bridge.games():
             when = time.strftime("%Y-%m-%d", time.localtime(g["last_played"])) if g["last_played"] else "never"
-            print("%8d  %-40s last played %s  %.1f GB" % (g["appid"], g["title"][:40], when, g["size_bytes"] / 1e9))
+            print("%8d  %-40s %6.1f h  last played %s  %.1f GB" % (g["appid"], g["title"][:40], g.get("hours", 0), when, g["size_bytes"] / 1e9))
         print("%d games." % len(bridge.games()))
         return
 

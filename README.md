@@ -50,6 +50,7 @@ python.org (tick *Add to PATH*), or `winget install Python.Python.3.12`.
 --port 9000            serve somewhere other than 8777
 --steam "D:\Steam"     if it can't find your Steam folder
 --name "Gaming station"  how the PC is shown in the page
+--steam-key KEY        optional Steam Web API key: shows games you own but haven't installed, and your avatar
 --pin 4821             change the PIN (default 2550); --pin "" turns the gate off entirely
 --token secret         additionally require an X-Apollo-Token header to launch (see Security)
 --dry-run              print what it found and exit — try this first
@@ -95,6 +96,24 @@ If you want a second factor for launching specifically, run with `--token` and s
 matching `X-Apollo-Token` header.
 
 Do **not** port-forward 8777 to the internet. Use Tailscale (the Install tab explains).
+
+## Your Steam account
+
+**Automatic, offline, private.** Steam already keeps a record on this PC of who is signed in
+and how long you've played each game. The bridge reads that, so the page shows your name in
+the corner, real hours on every cover, and "recently played" ordered by when you actually last
+played - across all your machines, since Steam syncs that. Nothing is sent anywhere and there
+is nothing to set up: if you're signed in to Steam on the PC, you're connected.
+
+**Optional: games you own but haven't installed.** Give the bridge a Steam Web API key and the
+page grows an *Also in your library* shelf - tap a cover and the PC starts installing it, so
+you can queue a download from the couch. It also fetches your avatar.
+
+1. Get a key at https://steamcommunity.com/dev/apikey (any domain name is fine, e.g. `localhost`).
+2. Start the bridge with `--steam-key YOURKEY`, or set `APOLLO_STEAM_KEY=YOURKEY`.
+
+The key stays on the PC and is never sent to the page. Because it's *your* key, this works
+even if your Steam profile is private. Both tiers sit behind the PIN like everything else.
 
 ## Keeping it working
 
