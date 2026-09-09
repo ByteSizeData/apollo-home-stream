@@ -463,9 +463,10 @@ function ago(ts){
   if(ts<946684800) return "long ago";           // Steam sometimes stores junk here for old installs
   var d=(Date.now()/1000-ts)/86400;
   if(d<1) return "today"; if(d<2) return "yesterday";
-  if(d<30) return Math.round(d)+" days ago";
-  if(d<365) return Math.round(d/30)+" months ago";
-  return Math.round(d/365)+" years ago";
+  function n(v,unit){ v=Math.round(v); return v+" "+unit+(v===1?"":"s")+" ago"; }
+  if(d<30) return n(d,"day");
+  if(d<365) return n(d/30,"month");
+  return n(d/365,"year");
 }
 function fromBridge(g){
   var h=(g.appid*2654435761)>>>0;         // stable hues per appid for the fallback art
