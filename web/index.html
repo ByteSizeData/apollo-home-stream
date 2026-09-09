@@ -448,7 +448,7 @@ function fromBridge(g){
 function loadLive(){
   if(!window.fetch) return;
   fetch("/api/games",{cache:"no-store"}).then(function(r){
-    if(r.status===401){ location.replace("/pin?next="+encodeURIComponent(location.pathname+location.search)); throw 0; }
+    if(r.status===401){ location.replace("/pin"); throw 0; }
     if(!r.ok) throw 0; return r.json();
   }).then(function(d){
     if(!d||!d.games) throw 0;
@@ -456,10 +456,10 @@ function loadLive(){
     GAMES=d.games.slice(0,24).map(fromBridge);
     if(d.host){ HOST.name=d.host; HOST.dns=d.host; }
     $("#hostText").textContent=HOST.name+" · connected"; $("#hostLamp").className="lamp";
+    $("#lockBtn").hidden=false;                       // connected → you can lock, even if the library is empty
     if(!GAMES.length){ GAMES=DEMO; LIVE=false; }
     if(!GAMES.some(function(g){return g.id===S.last})) S.last=GAMES[0].id;
     $("#demoBanner").hidden=LIVE;
-    $("#lockBtn").hidden=!LIVE;
     renderGames(); renderResume();
   }).catch(function(){ $("#demoBanner").hidden=false; $("#hostText").textContent="Sample library"; $("#hostLamp").className="lamp off"; });
 }

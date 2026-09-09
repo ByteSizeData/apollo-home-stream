@@ -99,11 +99,7 @@ button:disabled{opacity:.5; cursor:not-allowed; box-shadow:none}
     fetch('/api/pin',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pin:pin})})
       .then(function(r){ return r.json().then(function(j){ return {s:r.status,j:j}; }); })
       .then(function(x){
-        if(x.s===200){
-          var next=new URLSearchParams(location.search).get('next')||'/';
-          if(next.charAt(0)!=='/'||next.indexOf('//')===0) next='/';
-          location.replace(next); return;
-        }
+        if(x.s===200){ location.replace('/'); return; }   // never trust a ?next= — the app is one page
         if(x.s===429){ lock(x.j.retry_after||30); return; }
         go.disabled=false; wrap.classList.remove('shake'); void wrap.offsetWidth; wrap.classList.add('shake');
         msg.textContent = (typeof x.j.left==='number') ? 'Wrong PIN — '+x.j.left+' more tries before a timeout' : 'Wrong PIN';

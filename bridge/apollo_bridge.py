@@ -32,7 +32,7 @@ import threading
 import time
 from http.cookies import SimpleCookie
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import quote, urlparse
+from urllib.parse import urlparse
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 WEB_DIR = os.path.join(os.path.dirname(HERE), "web")
@@ -207,12 +207,20 @@ class Bridge:
     def gated(self):
         return bool(self.pin)
 
+    def _prune(self, now):
+        """Drop expired sessions and lockouts that have long since lapsed (called under the lock)."""
+        for tok in [t for t, exp in self._sessions.items() if exp < now]:
+            del self._sessions[tok]
+        for ip in [ip for ip, (_, until) in self._fails.items() if until and until < now - 3600]:
+            del self._fails[ip]
+
     def session_ok(self, token):
         if not self.gated:
             return True
         if not token:
             return False
         with self._lock:
+            self._prune(time.time())
             exp = self._sessions.get(token)
             if exp is None:
                 return False
@@ -225,10 +233,11 @@ class Bridge:
         """Returns ("ok", session_token) | ("bad", tries_left) | ("locked", seconds)."""
         now = time.time()
         with self._lock:
+            self._prune(now)
             count, until = self._fails.get(ip, (0, 0.0))
             if now < until:
                 return "locked", int(until - now) + 1
-            if hmac.compare_digest(str(given or ""), self.pin):
+            if hmac.compare_digest(str(given or "").encode("utf-8"), self.pin.encode("utf-8")):
                 self._fails.pop(ip, None)
                 tok = secrets.token_urlsafe(32)
                 self._sessions[tok] = now + SESSION_DAYS * 86400
@@ -318,8 +327,11 @@ def make_handler(bridge):
         def _read_json(self):
             try:
                 n = int(self.headers.get("Content-Length", 0))
-                if n > 4096:
-                    return None
+            except ValueError:
+                return None
+            if n < 0 or n > 4096:
+                return None
+            try:
                 return json.loads(self.rfile.read(n) or b"{}")
             except (ValueError, json.JSONDecodeError):
                 return None
@@ -351,10 +363,8 @@ def make_handler(bridge):
             return super().do_HEAD()
 
         def _redirect_to_pin(self, path):
-            nxt = path if (path.startswith("/") and not path.startswith("//") and path not in ("/pin", "/pin.html")) else "/"
-            loc = "/pin" if nxt == "/" else "/pin?next=" + quote(nxt, safe="/")
             self.send_response(302)
-            self.send_header("Location", loc)
+            self.send_header("Location", "/pin")   # never carry a ?next= — the app is one page
             self.send_header("Cache-Control", "no-store")
             self.send_header("Content-Length", "0")
             self.end_headers()
@@ -403,7 +413,8 @@ def make_handler(bridge):
             try:
                 launch_appid(appid)
             except Exception as e:  # noqa: BLE001
-                return self._json(500, {"error": str(e)})
+                self.log_message("launch of %d failed: %s", appid, e)
+                return self._json(500, {"error": "the host couldn't start it — check the bridge window"})
             return self._json(200, {"ok": True, "appid": appid, "title": known[appid]["title"]})
 
     return Handler

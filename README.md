@@ -71,6 +71,9 @@ the page and the API — sits behind the PIN:
 - Unlocking sets an `HttpOnly`, `SameSite=Strict` session cookie with a random 256-bit
   token, valid 30 days. *Lock this screen* in the footer ends it.
 - The PIN is compared in constant time and never appears in the page or the logs.
+- Lockout counts live in memory and are per device address, so restarting the bridge
+  resets them and a determined peer could rotate addresses. That's fine for the
+  people-in-your-house threat this is built for; it is not a bank vault.
 
 This is designed for a home network or a tailnet — to keep housemates and guests from
 launching things on your PC. It is **not** hardened for the open internet: the bridge

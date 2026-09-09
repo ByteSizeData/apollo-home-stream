@@ -139,12 +139,9 @@ class HttpGate(unittest.TestCase):
         self.assertEqual(st, 302)                            # pages bounce to the PIN screen
         self.assertEqual(hd.get("Location"), "/pin")
         self.assertEqual(body, b"")
-        st, hd, _ = self.req("GET", "/index.html")
-        self.assertEqual((st, hd.get("Location")), (302, "/pin?next=/index.html"))
-        st, hd, _ = self.req("GET", "//evil.example/x")
-        self.assertEqual(st, 302)                                    # never build an open redirect:
-        self.assertTrue(hd.get("Location", "").startswith("/pin"))   # stays on this origin…
-        self.assertNotIn("//", hd.get("Location", ""))               # …and can't smuggle a host in
+        for path in ("/index.html", "//evil.example/x", "/%5Cevil.example/", "/anything?next=/%5Cevil/"):
+            st, hd, _ = self.req("GET", path)
+            self.assertEqual((st, hd.get("Location")), (302, "/pin"), path)   # never a ?next=, never an open redirect
         self.assertEqual(self.req("GET", "/api/games")[0], 401)   # APIs answer 401, not a redirect
         self.assertEqual(self.req("GET", "/api/host")[0], 401)
         st, hd, _ = self.req("HEAD", "/index.html")
@@ -197,6 +194,36 @@ class HttpGate(unittest.TestCase):
         self.assertEqual(st, 200)
         self.assertIn("Max-Age=0", hd.get("Set-Cookie", ""))
         self.assertEqual(self.req("GET", "/api/games", cookie=tok)[0], 401)
+
+    def test_non_ascii_pin_is_just_wrong_not_a_crash(self):
+        st, _, body = self.req("POST", "/api/pin", {"pin": "２５５０"})    # full-width digits
+        self.assertEqual(st, 401)
+        self.assertEqual(json.loads(body)["error"], "wrong pin")
+
+    def test_hostile_content_length_does_not_hang(self):
+        for cl in ("-1", "99999999", "abc"):
+            c = http.client.HTTPConnection("127.0.0.1", self.port, timeout=3)
+            c.putrequest("POST", "/api/pin")
+            c.putheader("Content-Type", "application/json")
+            c.putheader("Content-Length", cl)
+            c.endheaders()
+            self.assertEqual(c.getresponse().status, 400, cl)   # answered promptly, not stuck reading
+
+    def test_launch_failure_is_not_echoed_raw(self):
+        tok = self.unlock()
+        real = ab.launch_appid
+        ab.launch_appid = lambda appid: (_ for _ in ()).throw(OSError("C:\\secret\\path: boom"))
+        try:
+            st, _, body = self.req("POST", "/api/launch", {"appid": 413150}, cookie=tok)
+        finally:
+            ab.launch_appid = real
+        self.assertEqual(st, 500)
+        self.assertNotIn("secret", body.decode())
+
+    def test_pin_page_has_no_next_redirect(self):
+        _, _, body = self.req("GET", "/pin")
+        self.assertNotIn(b"URLSearchParams", body)       # the client never reads a redirect target…
+        self.assertIn(b"location.replace('/')", body)   # …it always goes home
 
     def test_pin_page_never_leaks_the_pin(self):
         _, _, body = self.req("GET", "/pin")
