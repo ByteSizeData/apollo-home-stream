@@ -1,5 +1,7 @@
 # Apollo Home Stream
 
+[![tests](https://github.com/ByteSizeData/apollo-home-stream/actions/workflows/ci.yml/badge.svg)](https://github.com/ByteSizeData/apollo-home-stream/actions/workflows/ci.yml)
+
 Your own GeForce NOW — except the games are already on your PC.
 
 A small web page and a tiny bridge service for [Apollo](https://github.com/ClassicOldSong/Apollo)
@@ -51,6 +53,10 @@ python.org (tick *Add to PATH*), or `winget install Python.Python.3.12`.
 --pin 4821             change the PIN (default 2550); --pin "" turns the gate off entirely
 --token secret         additionally require an X-Apollo-Token header to launch (see Security)
 --dry-run              print what it found and exit — try this first
+--self-test            check Steam, Apollo, ports, network, then run the tests, and exit
+--check-update         say whether a newer version is on GitHub
+--update               fetch the newest version (git pull, or a verified zip), run the tests, roll back on failure
+--auto-update          apply updates at startup and restart (or APOLLO_AUTO_UPDATE=1)
 ```
 
 ### What the bridge does
@@ -90,10 +96,32 @@ matching `X-Apollo-Token` header.
 
 Do **not** port-forward 8777 to the internet. Use Tailscale (the Install tab explains).
 
+## Keeping it working
+
+**Self-test.** Run this after installing, and any time something feels off:
+
+```
+python bridge/apollo_bridge.py --self-test
+```
+
+It checks Python, the web files, your Steam folder (and how many games it sees), whether
+port 8777 is free, whether Apollo is answering on this PC, whether Tailscale is up, whether
+Steam's cover-art CDN and GitHub are reachable — then runs the whole test suite. `OK` rows
+work, `warn` rows are optional or explained, `FAIL` rows need fixing. The Play page shows
+the same connections as a row of dots under the Continue card.
+
+**Self-update.** The bridge checks GitHub at startup and prints a one-liner if there's a
+newer version. `--update` applies it: a git checkout gets `git pull`, a plain download gets
+the newest zip of this repo — verified to be this project, backed up first, tests run
+afterwards, and rolled back automatically if they fail. `--auto-update` does that on every
+start and restarts itself. Updates only ever come from `github.com/ByteSizeData/apollo-home-stream`.
+
+**Continuous tests.** Every push runs the test suite on Linux and Windows across two Python
+versions (see the *tests* badge / Actions tab), and every change to `web/` republishes the
+live site automatically. Nothing to copy by hand.
+
 ## Development
 
-`docs/` is the copy GitHub Pages serves. After changing `web/index.html`, copy it over:
-`cp web/index.html docs/index.html`.
 
 ```bash
 python3 -m unittest discover -s tests -v     # Steam file parsing tests

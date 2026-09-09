@@ -1,0 +1,44 @@
+name: publish site
+
+on:
+  push:
+    branches: [main]
+    paths: ["web/**", ".github/workflows/pages.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Sanity-check the page before publishing it
+        run: |
+          test -s web/index.html
+          grep -q "Apollo Home Stream" web/index.html
+          python3 - <<'PY'
+          import re,sys
+          s=open("web/index.html",encoding="utf-8").read()
+          ids=re.findall(r'\sid="([^"]+)"',s); dup=sorted({i for i in ids if ids.count(i)>1})
+          refs=set(re.findall(r'\$\("#([A-Za-z0-9_-]+)"\)',s))|set(re.findall(r'getElementById\("([A-Za-z0-9_-]+)"\)',s))
+          missing=sorted(r for r in refs if r not in ids)
+          if dup or missing: print("duplicate ids:",dup,"missing ids:",missing); sys.exit(1)
+          print("index.html ok:",len(ids),"ids")
+          PY
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: web
+      - id: deployment
+        uses: actions/deploy-pages@v4

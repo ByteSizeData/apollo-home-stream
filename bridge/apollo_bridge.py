@@ -31,6 +31,9 @@ import sys
 import threading
 import time
 from http.cookies import SimpleCookie
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import selfcare  # noqa: E402  (health checks, self-test, self-update)
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
@@ -197,6 +200,8 @@ class Bridge:
         self.host_name = host_name
         self.token = token
         self.pin = str(pin or "")
+        self.port = 8777
+        self.network = True
         self._cache = ([], 0.0)
         self._sessions = {}          # token -> expiry (unix seconds)
         self._fails = {}             # client ip -> (wrong_count, locked_until)
@@ -249,6 +254,22 @@ class Bridge:
                 return "locked", wait
             self._fails[ip] = (count, 0.0)
             return "bad", FREE_TRIES - count
+
+    def health(self):
+        now = time.time()
+        h = getattr(self, "_health", None)
+        if not h or now - h[1] > 30:
+            h = (selfcare.health(self, port=self.port, network=self.network), now)
+            self._health = h
+        return h[0]
+
+    def update_info(self):
+        now = time.time()
+        u = getattr(self, "_update", None)
+        if not u or now - u[1] > 3600:
+            u = (selfcare.update_status() if self.network else {"available": None, "error": "network checks off"}, now)
+            self._update = u
+        return u[0]
 
     def end_session(self, token):
         with self._lock:
@@ -348,6 +369,10 @@ def make_handler(bridge):
                 return self._json(200, {"games": bridge.games(), "host": bridge.host_name})
             if path == "/api/host":
                 return self._json(200, bridge.host())
+            if path == "/api/health":
+                return self._json(200, bridge.health())
+            if path == "/api/version":
+                return self._json(200, {"version": selfcare.VERSION, "sha": (selfcare.local_sha() or "")[:7], "update": bridge.update_info()})
             if path == "/":
                 self.path = "/index.html"
             return super().do_GET()
@@ -426,6 +451,13 @@ def main():
     ap.add_argument("--bind", default="0.0.0.0", help="0.0.0.0 = reachable from other devices")
     ap.add_argument("--steam", help="Steam install folder (auto-detected if omitted)")
     ap.add_argument("--name", default=socket.gethostname(), help="how this PC is shown in the page")
+    ap.add_argument("--self-test", action="store_true", help="check Steam, Apollo, ports, network and run the unit tests, then exit")
+    ap.add_argument("--no-network", action="store_true", help="skip internet checks and the update check")
+    ap.add_argument("--allow-missing-steam", action="store_true", help="self-test: a missing Steam folder is a warning, not a failure")
+    ap.add_argument("--check-update", action="store_true", help="say whether a newer version is on GitHub, then exit")
+    ap.add_argument("--update", action="store_true", help="update this copy from GitHub (git pull, or a verified zip), run the tests, then exit")
+    ap.add_argument("--auto-update", action="store_true", default=os.environ.get("APOLLO_AUTO_UPDATE") == "1",
+                    help="at startup, apply any available update and restart (or APOLLO_AUTO_UPDATE=1)")
     ap.add_argument("--pin", default=os.environ.get("APOLLO_PIN", DEFAULT_PIN),
                     help='4-digit (or longer) PIN needed to open the page and launch games; --pin "" disables')
     ap.add_argument("--token", default=os.environ.get("APOLLO_TOKEN", ""), help="additionally require this X-Apollo-Token header to launch")
@@ -438,6 +470,33 @@ def main():
         if not args.dry_run:
             print("Serving the page anyway with an empty library.", file=sys.stderr)
     bridge = Bridge(steam, args.name, args.token, pin=args.pin)
+    bridge.port = args.port
+    bridge.network = not args.no_network
+
+    if args.self_test:
+        rep = selfcare.self_test(bridge, port=args.port, network=not args.no_network, allow_missing_steam=args.allow_missing_steam)
+        selfcare.print_report(rep)
+        sys.exit(0 if rep["status"] != "fail" else 1)
+    if args.check_update:
+        u = selfcare.update_status()
+        print(u["error"] or ("update available: %s → %s  (run with --update)" % ((u["local"] or "?")[:7], u["remote"][:7]) if u["available"] else "up to date (%s)" % (u["local"] or "?")[:7]))
+        sys.exit(0)
+    if args.update:
+        ok, msg = selfcare.apply_update()
+        print(msg)
+        sys.exit(0 if ok else 1)
+    if not args.no_network:
+        u = selfcare.update_status(timeout=3)
+        if u["available"]:
+            if args.auto_update:
+                print("update available — applying (auto-update on)…")
+                ok, msg = selfcare.apply_update()
+                print(msg)
+                if ok:
+                    print("restarting with the new version…")
+                    os.execv(sys.executable, [sys.executable] + sys.argv)
+            else:
+                print("update available: %s → %s  — run  python bridge/apollo_bridge.py --update" % ((u["local"] or "?")[:7], u["remote"][:7]))
 
     if args.dry_run:
         print("Steam:", steam)
