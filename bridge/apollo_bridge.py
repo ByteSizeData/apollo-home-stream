@@ -202,6 +202,7 @@ class Bridge:
         self.pin = str(pin or "")
         self.port = 8777
         self.network = True
+        self._care_lock = threading.Lock()
         self._cache = ([], 0.0)
         self._sessions = {}          # token -> expiry (unix seconds)
         self._fails = {}             # client ip -> (wrong_count, locked_until)
@@ -256,20 +257,22 @@ class Bridge:
             return "bad", FREE_TRIES - count
 
     def health(self):
-        now = time.time()
-        h = getattr(self, "_health", None)
-        if not h or now - h[1] > 30:
-            h = (selfcare.health(self, port=self.port, network=self.network, serving=True), now)
-            self._health = h
-        return h[0]
+        with self._care_lock:
+            h = getattr(self, "_health", None)
+            if not h or time.time() - h[1] > 30:
+                data = selfcare.health(self, port=self.port, network=self.network, serving=True)
+                h = (data, time.time())                        # stamped when it FINISHED, so a slow check isn't instantly stale
+                self._health = h
+            return h[0]
 
     def update_info(self):
-        now = time.time()
-        u = getattr(self, "_update", None)
-        if not u or now - u[1] > 3600:
-            u = (selfcare.update_status() if self.network else {"available": None, "error": "network checks off"}, now)
-            self._update = u
-        return u[0]
+        with self._care_lock:
+            u = getattr(self, "_update", None)
+            if not u or time.time() - u[1] > 3600:
+                data = selfcare.update_status() if self.network else {"available": None, "local": selfcare.local_sha(), "remote": None, "error": "network checks off"}
+                u = (data, time.time())
+                self._update = u
+            return u[0]
 
     def end_session(self, token):
         with self._lock:
@@ -445,7 +448,26 @@ def make_handler(bridge):
     return Handler
 
 
+def restart(new_sha):
+    """Re-run this process with the same arguments. On Windows os.execv mangles quoting, so spawn instead."""
+    env = dict(os.environ, APOLLO_RESTARTED_FOR=new_sha or "")   # one restart per version, never a loop
+    argv = [sys.executable] + sys.argv
+    if os.name == "nt":
+        sys.exit(subprocess.call(argv, env=env))
+    os.execve(sys.executable, argv, env)
+
+
+def _console_safe():
+    """Windows consoles/redirects may be cp1252; never let a stray character kill the bridge."""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(errors="replace")
+        except (AttributeError, ValueError):
+            pass
+
+
 def main():
+    _console_safe()
     ap = argparse.ArgumentParser(description="Apollo Home Stream bridge")
     ap.add_argument("--port", type=int, default=8777)
     ap.add_argument("--bind", default="0.0.0.0", help="0.0.0.0 = reachable from other devices")
@@ -478,25 +500,30 @@ def main():
         selfcare.print_report(rep)
         sys.exit(0 if rep["status"] != "fail" else 1)
     if args.check_update:
+        if args.no_network:
+            print("--no-network given; not checking"); sys.exit(0)
         u = selfcare.update_status()
-        print(u["error"] or ("update available: %s → %s  (run with --update)" % ((u["local"] or "?")[:7], u["remote"][:7]) if u["available"] else "up to date (%s)" % (u["local"] or "?")[:7]))
+        if u["error"]:
+            print(u["error"]); sys.exit(2)
+        print("update available: %s -> %s  (run with --update)" % ((u["local"] or "?")[:7], u["remote"][:7]) if u["available"]
+              else "up to date (%s)" % (u["local"] or "?")[:7])
         sys.exit(0)
     if args.update:
-        ok, msg = selfcare.apply_update()
+        ok, msg, _, _ = selfcare.apply_update()
         print(msg)
         sys.exit(0 if ok else 1)
     if not args.no_network:
         u = selfcare.update_status(timeout=3)
         if u["available"]:
-            if args.auto_update:
-                print("update available — applying (auto-update on)…")
-                ok, msg = selfcare.apply_update()
+            if args.auto_update and os.environ.get("APOLLO_RESTARTED_FOR") != (u["remote"] or ""):
+                print("update available - applying (auto-update on)...")
+                ok, msg, before, after = selfcare.apply_update()
                 print(msg)
-                if ok:
-                    print("restarting with the new version…")
-                    os.execv(sys.executable, [sys.executable] + sys.argv)
-            else:
-                print("update available: %s → %s  — run  python bridge/apollo_bridge.py --update" % ((u["local"] or "?")[:7], u["remote"][:7]))
+                if ok and after and after != before:
+                    print("restarting with the new version...")
+                    restart(after)                              # never re-exec unless the code actually changed
+            elif u["available"]:
+                print("update available: %s -> %s  - run  python bridge/apollo_bridge.py --update" % ((u["local"] or "?")[:7], u["remote"][:7]))
 
     if args.dry_run:
         print("Steam:", steam)
