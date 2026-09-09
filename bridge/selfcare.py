@@ -18,7 +18,7 @@ import urllib.error
 import urllib.request
 import zipfile
 
-VERSION = "0.3.0"
+VERSION = "0.3.1"
 REPO = "ByteSizeData/apollo-home-stream"          # the ONLY place updates are ever fetched from
 BRANCH = "main"
 HERE = os.path.dirname(os.path.abspath(__file__))

@@ -182,6 +182,20 @@ def scan_games(steam_root):
     return games
 
 
+def parse_appid(v):
+    """A Steam app id is a positive integer below 2^31; anything else is 0."""
+    try:
+        if isinstance(v, bool):
+            return 0
+        if isinstance(v, float):
+            if v != v or v in (float("inf"), float("-inf")) or v != int(v):
+                return 0
+        n = int(v)
+    except (TypeError, ValueError, OverflowError):
+        return 0
+    return n if 0 < n < 2 ** 31 else 0
+
+
 def launch_url(url):
     """Open a steam:// URL on this PC (install, rungameid, ...)."""
     if platform.system() == "Windows":
@@ -306,6 +320,13 @@ class Bridge:
             self._cache = (cached, time.time())
         return cached
 
+    def safe_account_info(self):
+        try:
+            return self.account.info()
+        except Exception as e:  # noqa: BLE001
+            print("steam account: couldn't read the sign-in (%s)" % e)
+            return {"connected": False, "persona": "", "account": "", "steamid": "", "avatar": "", "source": "none", "web": bool(self.account.key)}
+
     def account_view(self):
         info = self.account.info()
         installed = {g["appid"] for g in self.games()}
@@ -313,7 +334,7 @@ class Bridge:
         return info
 
     def extra_checks(self):
-        info = self.account.info()
+        info = self.safe_account_info()
         checks = [selfcare._c("steam account", info["connected"], ("signed in as %s" % info["persona"]) if info["connected"] else "no Steam login found on this PC (open Steam and sign in once)", fail=False)]
         if self.account.key:
             self.account.web()
@@ -405,9 +426,13 @@ def make_handler(bridge):
                     return self._json(401, {"error": "pin required"})
                 return self._redirect_to_pin(path)        # any page: go to the PIN screen
             if path == "/api/games":
-                return self._json(200, {"games": bridge.games(), "host": bridge.host_name, "account": bridge.account.info()})
+                return self._json(200, {"games": bridge.games(), "host": bridge.host_name, "account": bridge.safe_account_info()})
             if path == "/api/account":
-                return self._json(200, bridge.account_view())
+                try:
+                    return self._json(200, bridge.account_view())
+                except Exception as e:  # noqa: BLE001
+                    self.log_message("account view failed: %s", e)
+                    return self._json(200, dict(bridge.safe_account_info(), also_owned=[]))
             if path == "/api/host":
                 return self._json(200, bridge.host())
             if path == "/api/health":
@@ -467,10 +492,7 @@ def make_handler(bridge):
             if bridge.token and not hmac.compare_digest(self.headers.get("X-Apollo-Token", ""), bridge.token):
                 return self._json(403, {"error": "bad token"})
             body = self._read_json()
-            try:
-                appid = int(body.get("appid", 0)) if isinstance(body, dict) else 0
-            except (TypeError, ValueError):
-                appid = 0
+            appid = parse_appid(body.get("appid") if isinstance(body, dict) else None)
             if not appid:
                 return self._json(400, {"error": "appid required"})
             action = (body.get("action") if isinstance(body, dict) else None) or "run"
@@ -551,12 +573,16 @@ def main():
         if not args.dry_run:
             print("Serving the page anyway with an empty library.", file=sys.stderr)
     bridge = Bridge(steam, args.name, args.token, pin=args.pin, steam_key=args.steam_key)
+    bridge.account.offline = args.no_network
     bridge.port = args.port
     bridge.network = not args.no_network
 
     if args.self_test:
         rep = selfcare.self_test(bridge, port=args.port, network=not args.no_network, allow_missing_steam=args.allow_missing_steam)
-        rep["checks"][3:3] = bridge.extra_checks()
+        try:
+            rep["checks"][3:3] = bridge.extra_checks()
+        except Exception as e:  # noqa: BLE001
+            rep["checks"].insert(3, selfcare._c("steam account", False, "couldn't read the sign-in (%s)" % e, fail=False))
         rep["status"] = selfcare._rollup(rep["checks"])
         selfcare.print_report(rep)
         sys.exit(0 if rep["status"] != "fail" else 1)
@@ -588,7 +614,10 @@ def main():
 
     if args.dry_run:
         print("Steam:", steam)
-        u = bridge.account.user()
+        try:
+            u = bridge.account.user()
+        except Exception:  # noqa: BLE001
+            u = None
         print("Account:", ("%s (%s)" % (u["persona"], u["account"])) if u else "nobody signed in on this PC",
               "- Web API key set" if args.steam_key else "- no Web API key (optional)")
         for lib in bridge.host()["libraries"]:

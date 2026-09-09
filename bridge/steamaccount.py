@@ -9,6 +9,7 @@ import json
 import os
 import threading
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -47,10 +48,12 @@ def login_users(steam_root):
     path = os.path.join(steam_root or "", "config", "loginusers.vdf")
     try:
         with open(path, encoding="utf-8", errors="replace") as f:
-            data = parse_vdf(f.read())
-    except OSError:
+            data = parse_vdf(f.read(4 * 1024 * 1024))
+    except Exception:  # noqa: BLE001 - missing, unreadable, absurdly nested: all mean "no account", never a crash
         return []
-    users = _ci(data, "users") or {}
+    users = _ci(data, "users")
+    if not isinstance(users, dict):
+        return []
     out = []
     for sid, info in users.items():
         if not str(sid).isdigit() or not isinstance(info, dict):
@@ -77,13 +80,15 @@ def account_id(steamid64):
 
 def local_playtime(steam_root, steamid64):
     """{appid: {'minutes': int, 'last_played': int}} from this user's localconfig.vdf."""
-    path = os.path.join(steam_root or "", "userdata", str(account_id(steamid64)), "config", "localconfig.vdf")
     try:
+        path = os.path.join(steam_root or "", "userdata", str(account_id(steamid64)), "config", "localconfig.vdf")
         with open(path, encoding="utf-8", errors="replace") as f:
-            data = parse_vdf(f.read())
-    except (OSError, ValueError):
+            data = parse_vdf(f.read(64 * 1024 * 1024))
+    except Exception:  # noqa: BLE001
         return {}
-    apps = _ci(data, "UserLocalConfigStore", "Software", "Valve", "Steam", "apps") or {}
+    apps = _ci(data, "UserLocalConfigStore", "Software", "Valve", "Steam", "apps")
+    if not isinstance(apps, dict):
+        return {}
     out = {}
     for appid, info in apps.items():
         if not str(appid).isdigit() or not isinstance(info, dict):
@@ -93,12 +98,40 @@ def local_playtime(steam_root, steamid64):
 
 
 # ----------------------------------------------------------------------------- tier 2: web api (optional)
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise urllib.error.HTTPError(req.full_url, code, "refusing redirect (the key is in the URL)", headers, fp)
+
+
+_opener = urllib.request.build_opener(_NoRedirect())
+
+
+def _bounded(fn, timeout):
+    """Wall-clock bound that covers DNS too (a socket timeout doesn't)."""
+    box = {}
+    def run():
+        try:
+            box["v"] = fn()
+        except BaseException as e:  # noqa: BLE001
+            box["e"] = e
+    t = threading.Thread(target=run, daemon=True)
+    t.start()
+    t.join(timeout)
+    if "e" in box:
+        raise box["e"]
+    if "v" not in box:
+        raise TimeoutError("Steam Web API didn't answer within %ss" % timeout)
+    return box["v"]
+
+
 def _web(path, params, key, timeout=WEB_TIMEOUT):
     q = dict(params, key=key, format="json")
     url = "https://api.steampowered.com/%s?%s" % (path, urllib.parse.urlencode(q))
     req = urllib.request.Request(url, headers={"User-Agent": "apollo-home-stream"})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return json.loads(r.read())
+    def go():
+        with _opener.open(req, timeout=timeout) as r:
+            return json.loads(r.read(8 * 1024 * 1024))
+    return _bounded(go, timeout + 1)
 
 
 def web_summary(key, steamid64):
@@ -121,12 +154,14 @@ def web_owned(key, steamid64):
 class SteamAccount:
     """Cached view of the signed-in account. `key` is optional and never leaves this process."""
 
-    def __init__(self, steam_root, key=""):
+    def __init__(self, steam_root, key="", offline=False):
         self.steam_root = steam_root
         self.key = key or ""
+        self.offline = offline                      # --no-network: the web tier stays off entirely
         self._lock = threading.Lock()
         self._local = (None, 0.0)
         self._web = (None, 0.0)
+        self._refreshing = False
         self.web_error = None
 
     def user(self):
@@ -143,25 +178,38 @@ class SteamAccount:
             return {}
         return local_playtime(self.steam_root, u["steamid"])
 
-    def web(self, max_age=1800):
-        """{'summary': {...}|None, 'owned': [...]} or None when there's no key; errors are remembered, not raised."""
-        if not self.key:
-            return None
-        u = self.user()
-        if not u:
-            return None
-        with self._lock:
-            w, when = self._web
-            if w is not None and time.time() - when < max_age:
-                return w
+    def _refresh(self, steamid):
         try:
-            w = {"summary": web_summary(self.key, u["steamid"]), "owned": web_owned(self.key, u["steamid"])}
+            w = {"summary": web_summary(self.key, steamid), "owned": web_owned(self.key, steamid)}
             self.web_error = None
         except Exception as e:  # noqa: BLE001
             self.web_error = "%s: %s" % (type(e).__name__, str(e)[:120])
             w = {"summary": None, "owned": []}
         with self._lock:
             self._web = (w, time.time())
+            self._refreshing = False
+        return w
+
+    def web(self, max_age=1800, wait=False):
+        """{'summary': {...}|None, 'owned': [...]} or None when there's no key / offline.
+        Never blocks the caller on the network unless wait=True (and even then only for a bounded time):
+        a stale or missing value triggers a background refresh and the last known value is returned."""
+        if not self.key or self.offline:
+            return None
+        u = self.user()
+        if not u:
+            return None
+        with self._lock:
+            w, when = self._web
+            fresh = w is not None and time.time() - when < max_age
+            if fresh:
+                return w
+            if self._refreshing:
+                return w                                     # someone else is already fetching; use what we have
+            self._refreshing = True
+        if wait and w is None:
+            return self._refresh(u["steamid"])                # first ever call from /api/account: bounded (~7 s max)
+        threading.Thread(target=self._refresh, args=(u["steamid"],), daemon=True).start()
         return w
 
     def info(self):
@@ -169,7 +217,7 @@ class SteamAccount:
         u = self.user()
         out = {"connected": bool(u), "persona": u.get("persona", "") if u else "", "account": u.get("account", "") if u else "",
                "steamid": u.get("steamid", "") if u else "", "avatar": "", "source": "local" if u else "none", "web": bool(self.key)}
-        w = self.web()
+        w = self.web(wait=True)
         if w and w.get("summary"):
             out["persona"] = w["summary"].get("persona") or out["persona"]
             out["avatar"] = w["summary"].get("avatar", "")
@@ -193,7 +241,7 @@ class SteamAccount:
         return games
 
     def owned_not_installed(self, installed_appids, limit=24):
-        w = self.web()
+        w = self.web(wait=True)
         if not w:
             return []
         rest = [g for g in w.get("owned") or [] if g["appid"] not in installed_appids]

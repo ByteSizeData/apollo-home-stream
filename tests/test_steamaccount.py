@@ -217,3 +217,84 @@ class ThroughTheBridge(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Hardening(unittest.TestCase):
+    """0.3.1: a broken Steam file, a stalled resolver, or a silly app id must never take the library down."""
+
+    def test_non_dict_users_and_absurd_nesting_degrade_to_no_account(self):
+        with tempfile.TemporaryDirectory() as d:
+            os.makedirs(os.path.join(d, "config"))
+            with open(os.path.join(d, "config", "loginusers.vdf"), "w") as f:
+                f.write('"users" "x"\n')
+            self.assertEqual(sa.login_users(d), []); self.assertIsNone(sa.current_user(d))
+            with open(os.path.join(d, "config", "loginusers.vdf"), "w") as f:
+                f.write('"users"{' + '"k"{' * 1500)
+            self.assertEqual(sa.login_users(d), [])                      # RecursionError swallowed, not raised
+            self.assertEqual(sa.SteamAccount(d).info()["connected"], False)
+
+    def test_bad_localconfig_shapes_are_empty_not_fatal(self):
+        with tempfile.TemporaryDirectory() as d:
+            make_root(d, local='"UserLocalConfigStore" { "Software" { "Valve" { "Steam" { "apps" "nope" } } } }')
+            self.assertEqual(sa.local_playtime(d, SID), {})
+            self.assertEqual(sa.local_playtime(d, "²"), {})              # isdigit() is True, int() raises - inside the try now
+
+    def test_games_endpoint_survives_a_broken_loginusers(self):
+        import threading, http.client
+        from http.server import ThreadingHTTPServer
+        with tempfile.TemporaryDirectory() as root:
+            os.makedirs(os.path.join(root, "config")); os.makedirs(os.path.join(root, "steamapps"))
+            with open(os.path.join(root, "config", "loginusers.vdf"), "w") as f:
+                f.write('"users" "x"\n')
+            with open(os.path.join(root, "steamapps", "appmanifest_413150.acf"), "w") as f:
+                f.write('"AppState"\n{\n\t"appid"\t\t"413150"\n\t"name"\t\t"Stardew Valley"\n\t"StateFlags"\t\t"4"\n}\n')
+            bridge = ab.Bridge(root, "h", "", pin="")
+            with mock.patch.object(bridge.account, "info", side_effect=RuntimeError("boom")):   # even if info() itself explodes
+                srv = ThreadingHTTPServer(("127.0.0.1", 0), ab.make_handler(bridge)); threading.Thread(target=srv.serve_forever, daemon=True).start()
+                try:
+                    for path in ("/api/games", "/api/account"):
+                        c = http.client.HTTPConnection("127.0.0.1", srv.server_address[1], timeout=5); c.request("GET", path); r = c.getresponse()
+                        self.assertEqual(r.status, 200, path)
+                        d = json.loads(r.read())
+                        if path == "/api/games":
+                            self.assertEqual(d["games"][0]["title"], "Stardew Valley"); self.assertFalse(d["account"]["connected"])
+                finally:
+                    srv.shutdown(); srv.server_close()
+
+    def test_silly_appids_are_rejected_not_crashes(self):
+        for bad in (1e400, float("inf"), float("nan"), 12.5, -5, 0, 2 ** 40, "abc", None, True, [1]):
+            self.assertEqual(ab.parse_appid(bad), 0, repr(bad))
+        self.assertEqual(ab.parse_appid(413150), 413150); self.assertEqual(ab.parse_appid("413150"), 413150); self.assertEqual(ab.parse_appid(413150.0), 413150)
+
+    def test_offline_switch_keeps_the_web_tier_silent(self):
+        calls = []
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(sa, "_web", lambda *a, **k: calls.append(a) or {}):
+            make_root(d)
+            acct = sa.SteamAccount(d, key="K", offline=True)
+            self.assertIsNone(acct.web(wait=True)); self.assertEqual(acct.info()["source"], "local"); self.assertEqual(calls, [])
+
+    def test_redirects_are_refused_because_the_key_is_in_the_url(self):
+        h = sa._NoRedirect()
+        req = sa.urllib.request.Request("https://api.steampowered.com/x?key=SECRET")
+        with self.assertRaises(sa.urllib.error.HTTPError):
+            h.redirect_request(req, None, 302, "Found", {}, "https://evil.example/collect")
+
+    def test_stalled_dns_never_blocks_the_games_list(self):
+        import time
+        def slow_summary(key, sid):
+            time.sleep(3); return {"persona": "late", "avatar": "", "profile": ""}
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(sa, "web_summary", slow_summary), mock.patch.object(sa, "web_owned", lambda k, s: []):
+            make_root(d)
+            acct = sa.SteamAccount(d, key="K")
+            t = time.time(); games = acct.enrich([{"appid": 413150, "title": "S", "last_played": 0}])
+            self.assertLess(time.time() - t, 0.5)                          # local data served immediately; refresh runs in the background
+            self.assertEqual(games[0]["hours"], 74.0)
+            self.assertTrue(acct._refreshing)
+            t = time.time(); acct.web(wait=True); self.assertLess(time.time() - t, 0.5)   # a second caller doesn't start a second fetch
+
+    def test_web_call_is_bounded_even_when_the_resolver_hangs(self):
+        import time
+        t = time.time()
+        with self.assertRaises(TimeoutError):
+            sa._bounded(lambda: time.sleep(5), 0.3)          # what a hung getaddrinfo looks like
+        self.assertLess(time.time() - t, 1.5)
