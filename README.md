@@ -16,6 +16,10 @@ A small web page and a tiny bridge service for [Apollo](https://github.com/Class
 The Install and Sleep & wake pages are plain documentation. The Play page becomes real when
 the bridge is running.
 
+**Live site:** https://bytesizedata.github.io/apollo-home-stream/ — the guide plus a sample library.
+Your real games only appear when you open the page *from the bridge on your gaming PC* (below),
+because the bridge is what reads your Steam folder.
+
 ## Run it
 
 On the **gaming PC** (the machine with Steam and Apollo on it):
@@ -87,6 +91,9 @@ matching `X-Apollo-Token` header.
 Do **not** port-forward 8777 to the internet. Use Tailscale (the Install tab explains).
 
 ## Development
+
+`docs/` is the copy GitHub Pages serves. After changing `web/index.html`, copy it over:
+`cp web/index.html docs/index.html`.
 
 ```bash
 python3 -m unittest discover -s tests -v     # Steam file parsing tests
