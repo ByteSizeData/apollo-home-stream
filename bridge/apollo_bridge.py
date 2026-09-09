@@ -6,12 +6,12 @@ Runs on the gaming PC (the Apollo host). Reads the Steam libraries already on
 this machine, serves the web page, and starts games on the host when you press
 Launch from any device. Standard library only — no pip installs.
 
-    python apollo_bridge.py                 # auto-detect Steam, serve on :8777
-    python apollo_bridge.py --port 9000
-    python apollo_bridge.py --steam "D:\\Steam"
-    python apollo_bridge.py --pin 2550        # PIN gate (default 2550; --pin "" turns it off)
-    python apollo_bridge.py --token mysecret  # additionally require X-Apollo-Token on launch
-    python apollo_bridge.py --dry-run         # print what it found, don't serve
+    python bridge/apollo_bridge.py                 # auto-detect Steam, serve on :8777
+    python bridge/apollo_bridge.py --port 9000
+    python bridge/apollo_bridge.py --steam "D:\\Steam"
+    python bridge/apollo_bridge.py --pin 2550        # PIN gate (default 2550; --pin "" turns it off)
+    python bridge/apollo_bridge.py --token mysecret  # additionally require X-Apollo-Token on launch
+    python bridge/apollo_bridge.py --dry-run         # print what it found, don't serve
 
 Then open  http://<this-pc-name>:8777  from any screen on your network or tailnet.
 Launch starts the game here on the host; you then connect with Artemis/Moonlight
@@ -448,6 +448,15 @@ def make_handler(bridge):
     return Handler
 
 
+class Server(ThreadingHTTPServer):
+    """Refuses to start on a port another bridge holds - on Windows too, where the stdlib default would bind over it."""
+    allow_reuse_address = os.name != "nt"
+
+    def server_bind(self):
+        selfcare.exclusive_bind_options(self.socket)
+        super().server_bind()
+
+
 def restart(new_sha):
     """Re-run this process with the same arguments. On Windows os.execv mangles quoting, so spawn instead."""
     env = dict(os.environ, APOLLO_RESTARTED_FOR=new_sha or "")   # one restart per version, never a loop
@@ -538,7 +547,12 @@ def main():
     if not os.path.isdir(WEB_DIR):
         print("web/ folder not found next to bridge/ — page won't load.", file=sys.stderr)
 
-    srv = ThreadingHTTPServer((args.bind, args.port), make_handler(bridge))
+    busy = selfcare.check_port(args.port)
+    if busy["status"] != "ok":
+        print("port %d is %s" % (args.port, busy["detail"]))
+        print("stop the other one, or start this one with --port 8778")
+        sys.exit(1)
+    srv = Server((args.bind, args.port), make_handler(bridge))
     print("Apollo bridge on http://%s:%d  (Steam: %s, %d games)" % (args.name, args.port, steam, len(bridge.games())))
     print("PIN gate: %s" % ("on" if bridge.gated else "OFF — anyone who can reach this port can launch games"))
     print("Open that address from any device on your network or tailnet. Ctrl-C to stop.")

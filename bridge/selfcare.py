@@ -18,7 +18,7 @@ import urllib.error
 import urllib.request
 import zipfile
 
-VERSION = "0.2.1"
+VERSION = "0.2.2"
 REPO = "ByteSizeData/apollo-home-stream"          # the ONLY place updates are ever fetched from
 BRANCH = "main"
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -30,12 +30,27 @@ ALLOWED_HOSTS = ("github.com", "api.github.com", "codeload.github.com", "objects
 
 
 # ----------------------------------------------------------------------------- bounded helpers
-def _bounded(fn, timeout, default):
-    """Run fn() in a daemon thread; give up after `timeout` s (DNS can hang far past socket timeouts)."""
+class Timeout(Exception):
+    pass
+
+
+def _bounded(fn, timeout, default, raise_errors=False):
+    """Run fn() in a daemon thread; give up after `timeout` s (DNS can hang far past socket timeouts).
+    The worker's exception is captured - never printed by the thread machinery - and either re-raised
+    here (raise_errors=True) or turned into `default`."""
     box = {}
-    t = threading.Thread(target=lambda: box.__setitem__("v", fn()), daemon=True)
+    def run():
+        try:
+            box["v"] = fn()
+        except BaseException as e:  # noqa: BLE001 - captured on purpose
+            box["e"] = e
+    t = threading.Thread(target=run, daemon=True)
     t.start()
     t.join(timeout)
+    if "e" in box and raise_errors:
+        raise box["e"]
+    if "v" not in box and raise_errors and t.is_alive():
+        raise Timeout("timed out after %ss" % timeout)
     return box.get("v", default)
 
 
@@ -54,7 +69,7 @@ def _tcp(host, port, timeout=NET_TIMEOUT):
                 return True
             finally:
                 s.close()
-        except OSError:
+        except Exception:  # noqa: BLE001
             return False
     return _bounded(probe, timeout + 0.5, False)
 
@@ -105,15 +120,23 @@ def check_steam(bridge, allow_missing=False):
     return _c("steam", n > 0, "%d installed game%s in %s" % (n, "" if n == 1 else "s", root), fail=False)
 
 
+def exclusive_bind_options(sock):
+    """Socket options that make a bind fail if something is really listening - the same ones the server uses."""
+    if os.name == "nt":
+        if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)   # Windows: SO_REUSEADDR would bind over a live listener
+    else:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)              # POSIX: tolerate TIME_WAIT, still refuse a live listener
+
+
 def check_port(port):
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    if os.name == "nt" and hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
-        s.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)   # on Windows SO_REUSEADDR would bind over a live listener
+    exclusive_bind_options(s)
     try:
         s.bind(("0.0.0.0", port))
         return _c("port %d" % port, True, "free")
     except OSError:
-        return _c("port %d" % port, False, "already in use - is another bridge running?", fail=False)
+        return _c("port %d" % port, False, "already in use - another bridge is running (or one stopped a moment ago)", fail=False)
     finally:
         s.close()
 
@@ -187,13 +210,17 @@ def health(bridge, port=8777, network=True, allow_missing_steam=False, serving=F
     checks = [check_python(), check_files(), check_steam(bridge, allow_missing_steam), port_check, check_apollo(), check_tailscale()]
     if network:
         checks += check_internet()
+    return {"version": VERSION, "sha": (local_sha() or "")[:7], "status": _rollup(checks), "checks": checks, "checked_at": int(time.time())}
+
+
+def _rollup(checks):
     worst = "ok"
     for c in checks:
         if c["status"] == "fail":
-            worst = "fail"
-        elif c["status"] == "warn" and worst == "ok":
+            return "fail"
+        if c["status"] == "warn":
             worst = "warn"
-    return {"version": VERSION, "sha": (local_sha() or "")[:7], "status": worst, "checks": checks, "checked_at": int(time.time())}
+    return worst
 
 
 # ----------------------------------------------------------------------------- self-test
@@ -215,8 +242,7 @@ def self_test(bridge, port=8777, network=True, allow_missing_steam=False, with_u
     h = health(bridge, port, network, allow_missing_steam)
     if with_unit_tests:
         h["checks"].append(run_unit_tests())
-        if h["checks"][-1]["status"] == "fail":
-            h["status"] = "fail"
+        h["status"] = _rollup(h["checks"])
     return h
 
 
@@ -259,11 +285,18 @@ def update_status(timeout=NET_TIMEOUT):
     """{'available': bool|None, 'local': sha, 'remote': sha, 'error': str|None} - never raises."""
     loc = local_sha()
     try:
-        rem = _bounded(lambda: remote_sha(timeout), timeout + 1, None)
-        if rem is None:
-            raise TimeoutError("timed out")
+        rem = _bounded(lambda: remote_sha(timeout), timeout + 1, None, raise_errors=True)
+        if not rem:
+            raise Timeout("no answer")
+    except urllib.error.HTTPError as e:
+        why = "GitHub rate limit - try again in an hour" if e.code in (403, 429) else "GitHub answered HTTP %d" % e.code
+        return {"available": None, "local": loc, "remote": None, "error": "couldn't check for updates: " + why}
+    except (urllib.error.URLError, socket.gaierror, ConnectionError):
+        return {"available": None, "local": loc, "remote": None, "error": "couldn't check for updates: no internet, or DNS isn't working"}
+    except Timeout:
+        return {"available": None, "local": loc, "remote": None, "error": "couldn't check for updates: GitHub didn't answer in time"}
     except Exception as e:  # noqa: BLE001
-        return {"available": None, "local": loc, "remote": None, "error": "couldn't reach GitHub (%s)" % (type(e).__name__)}
+        return {"available": None, "local": loc, "remote": None, "error": "couldn't check for updates (%s)" % type(e).__name__}
     if not loc:
         return {"available": True, "local": None, "remote": rem, "error": None}
     return {"available": loc != rem, "local": loc, "remote": rem, "error": None}
@@ -283,13 +316,22 @@ def _safe_members(zf, prefix):
 def _git_update(log):
     before = local_sha()
     try:
+        porcelain = _git("status", "--porcelain", "--untracked-files=no", timeout=30).stdout
+        dirty = [l[3:] for l in porcelain.splitlines() if l.strip()]      # "XY path" - keep the leading status columns intact
+        if dirty:
+            files = ", ".join(dirty[:5]) + (" ..." if len(dirty) > 5 else "")
+            return False, ("you have uncommitted changes in: %s - commit or `git stash` them, then update "
+                           "(nothing was changed, and nothing will be thrown away)" % files), before, before
         r = _git("fetch", "https://github.com/%s.git" % REPO, BRANCH)      # always the pinned repo, never `origin`
         if r.returncode != 0:
             return False, "git fetch failed: " + (r.stderr or r.stdout).strip()[-300:], before, before
         r = _git("merge", "--ff-only", "FETCH_HEAD")
         if r.returncode != 0:
-            return False, ("this copy has local commits that aren't on GitHub, so it can't fast-forward - "
-                           "commit them upstream or run `git -C %s reset --hard FETCH_HEAD` if you don't need them" % ROOT), before, before
+            ahead = _git("rev-list", "--count", "FETCH_HEAD..HEAD", timeout=30).stdout.strip()
+            if ahead.isdigit() and int(ahead) > 0:
+                return False, ("this copy has %s local commit%s that aren't on GitHub, so it can't fast-forward - "
+                               "push them, or move them to a branch, then update" % (ahead, "" if ahead == "1" else "s")), before, before
+            return False, "git couldn't fast-forward: " + (r.stderr or r.stdout).strip()[-300:], before, before
     except subprocess.TimeoutExpired:
         return False, "git timed out (network drop or a credential prompt?) - nothing was changed", before, before
     after = local_sha()
@@ -297,20 +339,28 @@ def _git_update(log):
         return True, "already up to date (%s)" % (after or "?")[:7], before, after
     t = run_unit_tests()
     if t["status"] == "fail":
-        _git("reset", "--hard", before)
+        _git("reset", "--keep", before)                                   # --keep: never discards anything the update didn't make
         return False, "updated to %s but the tests failed (%s) - rolled back to %s" % (after[:7], t["detail"], before[:7]), before, local_sha()
     return True, "updated via git %s -> %s . %s" % ((before or "?")[:7], after[:7], t["detail"]), before, after
 
 
+def _move(src, dst):
+    """Rename a directory - works on Windows even when it's some process's current directory."""
+    os.rename(src, dst)
+
+
 def _zip_update(log):
     before = local_sha()
-    target = remote_sha()                                                    # decide the exact commit FIRST...
-    url = "https://codeload.github.com/%s/zip/%s" % (REPO, target)           # ...then download exactly that commit
+    os.chdir(ROOT)                                                             # never run with cwd inside a folder we're about to swap
+    target = remote_sha()                                                      # decide the exact commit FIRST...
+    url = "https://codeload.github.com/%s/zip/%s" % (REPO, target)             # ...then download exactly that commit
     log("downloading " + url)
     tmp = tempfile.mkdtemp(prefix="apollo-update-")
     zpath = os.path.join(tmp, "update.zip")
-    backup = None
-    touched = False
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    backup = os.path.join(ROOT, ".backup-" + stamp)
+    staged, swapped = [], []
+    old_sha_text = None
     try:
         with _get(url, 60) as r, open(zpath, "wb") as f:
             shutil.copyfileobj(r, f, 1024 * 1024)
@@ -327,53 +377,69 @@ def _zip_update(log):
                     return False, "download doesn't look like this project (missing %s) - not touching anything" % must, before, before
             zf.extractall(tmp)
         src = os.path.join(tmp, top.rstrip("/"))
-        backup = os.path.join(ROOT, ".backup-" + time.strftime("%Y%m%d-%H%M%S"))
-        os.makedirs(backup)
+        # stage the new folders NEXT TO the live ones (same filesystem, so the swap is a rename, not a copy)
         for d in ("bridge", "web", "tests"):
-            cur = os.path.join(ROOT, d)
-            if os.path.isdir(cur):
-                shutil.copytree(cur, os.path.join(backup, d))
-        old_sha_text = None
+            new = os.path.join(src, d)
+            if os.path.isdir(new):
+                stage = os.path.join(ROOT, d + ".new")
+                shutil.rmtree(stage, ignore_errors=True)
+                shutil.copytree(new, stage)
+                staged.append(d)
         if os.path.exists(SHA_FILE):
             with open(SHA_FILE) as f:
                 old_sha_text = f.read()
-        touched = True
-        for d in ("bridge", "web", "tests"):
-            new = os.path.join(src, d)
-            if not os.path.isdir(new):
-                continue
-            cur = os.path.join(ROOT, d)
-            if os.path.isdir(cur):
-                shutil.rmtree(cur)
-            shutil.copytree(new, cur)
+        os.makedirs(backup)
+        # swap: live -> backup, staged -> live. Each step is a rename; if one fails we know exactly what moved.
+        for d in staged:
+            live, stage, kept = os.path.join(ROOT, d), os.path.join(ROOT, d + ".new"), os.path.join(backup, d)
+            if os.path.isdir(live):
+                _move(live, kept)
+            swapped.append(d)
+            _move(stage, live)
         t = run_unit_tests()
         if t["status"] == "fail":
             raise RuntimeError("tests failed after update: " + t["detail"])
-        with open(SHA_FILE, "w") as f:                                        # record only once it's proven good
+        with open(SHA_FILE, "w") as f:                                         # record only once it's proven good
             f.write(target + "\n")
         shutil.rmtree(backup, ignore_errors=True)
         return True, "updated to %s . %s" % (target[:7], t["detail"]), before, target
     except Exception as e:  # noqa: BLE001
-        if not touched:
+        if not swapped:
+            for d in staged:
+                shutil.rmtree(os.path.join(ROOT, d + ".new"), ignore_errors=True)
+            shutil.rmtree(backup, ignore_errors=True)
             return False, "update failed before touching anything: %s" % e, before, before
-        try:
-            for d in ("bridge", "web", "tests"):
-                cur = os.path.join(ROOT, d)
-                old = os.path.join(backup, d)
-                if os.path.isdir(cur):
-                    shutil.rmtree(cur)
-                if os.path.isdir(old):
-                    shutil.copytree(old, cur)
-            if old_sha_text is None:
-                if os.path.exists(SHA_FILE):
-                    os.remove(SHA_FILE)
-            else:
-                with open(SHA_FILE, "w") as f:
-                    f.write(old_sha_text)
-            return False, "update rolled back: %s (previous files restored)" % e, before, before
-        except Exception as e2:  # noqa: BLE001
-            return False, ("UPDATE FAILED AND ROLLBACK FAILED (%s / %s). Your previous files are in %s - copy bridge/, web/ and tests/ back by hand."
-                           % (e, e2, backup)), before, local_sha()
+        problems = []
+        for d in swapped:
+            live, kept = os.path.join(ROOT, d), os.path.join(backup, d)
+            if not os.path.isdir(kept):                                          # there was no such folder before: the update created it
+                shutil.rmtree(live, ignore_errors=True)
+                continue
+            try:
+                if os.path.isdir(live):
+                    try:
+                        _move(live, os.path.join(backup, d + ".failed"))
+                    except OSError:
+                        shutil.rmtree(live, ignore_errors=True)              # locked dir? empty it, then refill it in place
+                if os.path.isdir(live):
+                    shutil.copytree(kept, live, dirs_exist_ok=True)
+                else:
+                    _move(kept, live)
+            except Exception as e2:  # noqa: BLE001
+                problems.append("%s (%s)" % (d, e2))
+        for d in staged:
+            shutil.rmtree(os.path.join(ROOT, d + ".new"), ignore_errors=True)
+        if old_sha_text is None:
+            if os.path.exists(SHA_FILE):
+                os.remove(SHA_FILE)
+        else:
+            with open(SHA_FILE, "w") as f:
+                f.write(old_sha_text)
+        if problems:
+            return False, ("UPDATE FAILED AND ROLLBACK FAILED for %s. Your previous files are in %s - copy them back by hand."
+                           % (", ".join(problems), backup)), before, local_sha()
+        shutil.rmtree(backup, ignore_errors=True)
+        return False, "update rolled back: %s (previous files restored)" % e, before, before
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

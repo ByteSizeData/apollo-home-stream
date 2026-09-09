@@ -129,7 +129,7 @@ class UpdateStatus(unittest.TestCase):
     def test_offline_is_reported_not_raised(self):
         with mock.patch.object(selfcare, "remote_sha", side_effect=OSError("no net")), mock.patch.object(selfcare, "local_sha", return_value=SHA_A):
             u = selfcare.update_status()
-            self.assertIsNone(u["available"]); self.assertIn("couldn't reach GitHub", u["error"])
+            self.assertIsNone(u["available"]); self.assertIn("couldn't check for updates", u["error"])
 
     def test_same_and_different_shas(self):
         with mock.patch.object(selfcare, "remote_sha", return_value=SHA_A), mock.patch.object(selfcare, "local_sha", return_value=SHA_A):
@@ -147,6 +147,10 @@ class GitUpdate(unittest.TestCase):
         it = iter(shas)
         def fake_git(*args, timeout=120):
             calls.append(args)
+            if args[0] == "status":
+                return mock.Mock(returncode=0, stdout="", stderr="")
+            if args[0] == "rev-list":
+                return mock.Mock(returncode=0, stdout="2\n", stderr="")
             if args[0] == "rev-parse":
                 return mock.Mock(returncode=0, stdout=next(it) + "\n", stderr="")
             if args[0] == "fetch":
@@ -177,7 +181,7 @@ class GitUpdate(unittest.TestCase):
         calls = []
         ok, msg, before, after = self.run_git(calls, [SHA_A, SHA_B, SHA_A], tests_ok=False)
         self.assertFalse(ok); self.assertIn("rolled back", msg)
-        self.assertIn(("reset", "--hard", SHA_A), calls)
+        self.assertIn(("reset", "--keep", SHA_A), calls)              # --keep: the user's own edits survive
         self.assertEqual(after, SHA_A)
 
     def test_git_timeouts_do_not_raise(self):
@@ -281,18 +285,181 @@ class ZipUpdate(unittest.TestCase):
 
     def test_rollback_failure_is_loud_and_names_the_backup(self):
         make_zip(self.zip, "x/")
+        real_move = selfcare._move
+        def failing_move(src, dst):
+            if ".backup-" in src and src.endswith(os.sep + "bridge"):      # moving the kept copy back fails...
+                raise PermissionError(32, "in use")
+            return real_move(src, dst)
         real_copytree = shutil.copytree
-        state = {"n": 0}
-        def flaky_copytree(src, dst, *a, **k):
-            state["n"] += 1
-            if state["n"] > 4:                       # let the backup (3 dirs) + first install copy succeed, then fail during rollback
-                raise OSError("disk full")
+        def failing_copytree(src, dst, *a, **k):                              # ...and so does refilling it (staging copies still work)
+            if dst.endswith(os.sep + "bridge"):
+                raise PermissionError(32, "in use")
             return real_copytree(src, dst, *a, **k)
         with self.fake_download(), mock.patch.object(selfcare, "run_unit_tests", return_value={"name": "unit tests", "status": "fail", "detail": "FAILED"}), \
-             mock.patch.object(selfcare.shutil, "copytree", flaky_copytree):
+             mock.patch.object(selfcare, "_move", failing_move), mock.patch.object(selfcare.shutil, "copytree", failing_copytree):
             ok, msg, _, _ = selfcare.apply_update(log=lambda *a: None)
         self.assertFalse(ok); self.assertIn("ROLLBACK FAILED", msg); self.assertIn(".backup-", msg)
 
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SecondPassFixes(unittest.TestCase):
+    """Regression tests for the second adversarial pass (0.2.2)."""
+
+    # --- git path -----------------------------------------------------------------
+    def git_env(self, calls, dirty="", shas=(SHA_A, SHA_B), merge_rc=0, ahead="0", tests_ok=True):
+        it = iter(shas)
+        def fake_git(*args, timeout=120):
+            calls.append(args)
+            a = args[0]
+            if a == "status": return mock.Mock(returncode=0, stdout=dirty, stderr="")
+            if a == "rev-parse": return mock.Mock(returncode=0, stdout=next(it) + "\n", stderr="")
+            if a == "fetch": return mock.Mock(returncode=0, stdout="", stderr="")
+            if a == "merge": return mock.Mock(returncode=merge_rc, stdout="", stderr="fatal: Not possible to fast-forward, aborting." if merge_rc else "")
+            if a == "rev-list": return mock.Mock(returncode=0, stdout=ahead + "\n", stderr="")
+            return mock.Mock(returncode=0, stdout="", stderr="")
+        return [mock.patch.object(selfcare, "is_git_checkout", return_value=True), mock.patch.object(selfcare, "_git", fake_git),
+                mock.patch.object(selfcare, "run_unit_tests", return_value={"name": "unit tests", "status": "ok" if tests_ok else "fail", "detail": "Ran 1 test - OK" if tests_ok else "FAILED"})]
+
+    def run_with(self, patches):
+        for p in patches: p.start()
+        try:
+            return selfcare.apply_update(log=lambda *a: None)
+        finally:
+            for p in patches: p.stop()
+
+    def test_dirty_tree_is_refused_before_fetching(self):
+        calls = []
+        ok, msg, before, after = self.run_with(self.git_env(calls, dirty=" M web/index.html\n M bridge/apollo_bridge.py\n"))
+        self.assertFalse(ok); self.assertIn("uncommitted changes in: web/index.html, bridge/apollo_bridge.py", msg)
+        self.assertNotIn("reset --hard", msg)
+        self.assertFalse([c for c in calls if c[0] in ("fetch", "merge")])     # nothing touched
+        self.assertEqual(before, after)
+
+    def test_rollback_keeps_the_users_edits(self):
+        calls = []
+        ok, msg, _, _ = self.run_with(self.git_env(calls, shas=(SHA_A, SHA_B, SHA_A), tests_ok=False))
+        self.assertFalse(ok); self.assertIn("rolled back", msg)
+        self.assertIn(("reset", "--keep", SHA_A), calls)
+        self.assertFalse([c for c in calls if c[:2] == ("reset", "--hard")])
+
+    def test_local_commits_are_counted_not_guessed(self):
+        ok, msg, _, _ = self.run_with(self.git_env([], shas=(SHA_A,), merge_rc=1, ahead="2"))
+        self.assertFalse(ok); self.assertIn("2 local commits", msg); self.assertNotIn("reset --hard", msg)
+        ok, msg, _, _ = self.run_with(self.git_env([], shas=(SHA_A,), merge_rc=1, ahead="0"))
+        self.assertFalse(ok); self.assertIn("Not possible to fast-forward", msg)      # git's own words, not a guess
+
+    # --- bounded / update_status ---------------------------------------------------
+    def test_bounded_reraises_in_the_caller_and_prints_no_traceback(self):
+        def boom(): raise ValueError("inner")
+        err = io.StringIO()
+        with mock.patch("sys.stderr", err):
+            with self.assertRaises(ValueError):
+                selfcare._bounded(boom, 1, None, raise_errors=True)
+            self.assertIsNone(selfcare._bounded(boom, 1, None))               # default: swallowed
+        self.assertEqual(err.getvalue(), "")                                  # no "Exception in thread" noise
+
+    def test_update_status_explains_real_causes(self):
+        import urllib.error
+        err = io.StringIO()
+        with mock.patch("sys.stderr", err), mock.patch.object(selfcare, "local_sha", return_value=SHA_A):
+            with mock.patch.object(selfcare, "remote_sha", side_effect=urllib.error.HTTPError("u", 403, "rate limited", {}, None)):
+                self.assertIn("rate limit", selfcare.update_status()["error"])
+            with mock.patch.object(selfcare, "remote_sha", side_effect=urllib.error.URLError("dns")):
+                self.assertIn("no internet", selfcare.update_status()["error"])
+            with mock.patch.object(selfcare, "remote_sha", side_effect=lambda t: __import__("time").sleep(3)):
+                self.assertIn("didn't answer in time", selfcare.update_status(timeout=0.2)["error"])
+        self.assertEqual(err.getvalue(), "")
+
+    # --- self-test roll-up ------------------------------------------------------------
+    def test_self_test_rollup_includes_the_unit_test_row(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(selfcare, "check_apollo", lambda: selfcare._c("apollo host", True, "x")), \
+             mock.patch.object(selfcare, "check_tailscale", lambda: selfcare._c("tailscale", True, "x")), \
+             mock.patch.object(selfcare, "run_unit_tests", return_value={"name": "unit tests", "status": "warn", "detail": "tests/ missing"}):
+            h = selfcare.self_test(FakeBridge(d, [1]), port=0, network=False)
+            self.assertEqual(h["status"], "warn")
+
+    # --- server bind --------------------------------------------------------------
+    def test_server_refuses_reuse_on_windows_only(self):
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "bridge"))
+        import apollo_bridge
+        self.assertEqual(apollo_bridge.Server.allow_reuse_address, os.name != "nt")
+
+
+class ZipSwap(unittest.TestCase):
+    """Stage-and-swap install: the live folders are never deleted before their replacements exist."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(); self.root = os.path.join(self.tmp, "root")
+        for d, f in (("bridge", "apollo_bridge.py"), ("bridge", "selfcare.py"), ("web", "index.html"), ("web", "pin.html")):
+            os.makedirs(os.path.join(self.root, d), exist_ok=True)
+            with open(os.path.join(self.root, d, f), "w") as fh: fh.write("old")
+        self.sha_file = os.path.join(self.root, ".apollo-sha")
+        with open(self.sha_file, "w") as fh: fh.write(SHA_A + "\n")
+        self.zip = os.path.join(self.tmp, "dl.zip"); make_zip(self.zip, "x/")
+        self.cwd = os.getcwd()
+        self.patches = [mock.patch.object(selfcare, "ROOT", self.root), mock.patch.object(selfcare, "SHA_FILE", self.sha_file),
+                        mock.patch.object(selfcare, "remote_sha", return_value=SHA_B), mock.patch.object(selfcare, "is_git_checkout", return_value=False)]
+        for p in self.patches: p.start()
+        zpath = self.zip
+        class R:
+            def __init__(self, url, timeout=None): self.f = open(zpath, "rb")
+            def __enter__(self): return self.f
+            def __exit__(self, *a): self.f.close()
+        self.dl = mock.patch.object(selfcare, "_get", lambda url, timeout: R(url, timeout)); self.dl.start()
+
+    def tearDown(self):
+        self.dl.stop()
+        for p in self.patches: p.stop()
+        os.chdir(self.cwd); shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def read(self, *parts):
+        with open(os.path.join(self.root, *parts)) as f: return f.read()
+
+    def listing(self):
+        return sorted(x for x in os.listdir(self.root))
+
+    def test_swap_leaves_no_staging_or_backup_behind(self):
+        with mock.patch.object(selfcare, "run_unit_tests", return_value={"name": "unit tests", "status": "ok", "detail": "OK"}):
+            ok, msg, _, after = selfcare.apply_update(log=lambda *a: None)
+        self.assertTrue(ok, msg); self.assertEqual(after, SHA_B)
+        self.assertEqual(self.read("bridge", "apollo_bridge.py"), "print('new bridge')\n")
+        self.assertEqual(self.listing(), [".apollo-sha", "bridge", "tests", "web"])
+
+    def test_live_folder_that_cannot_be_moved_means_nothing_is_touched(self):
+        real = os.rename
+        def rename(src, dst):
+            if src.endswith(os.sep + "bridge"): raise PermissionError(32, "in use")   # Windows: some process's cwd
+            return real(src, dst)
+        with mock.patch.object(selfcare.os, "rename", rename):
+            ok, msg, before, after = selfcare.apply_update(log=lambda *a: None)
+        self.assertFalse(ok); self.assertIn("before touching anything", msg)
+        self.assertEqual(self.read("bridge", "apollo_bridge.py"), "old"); self.assertEqual(self.read("web", "index.html"), "old")
+        self.assertEqual(self.listing(), [".apollo-sha", "bridge", "web"])          # no .new, no .backup-
+
+    def test_failed_tests_after_swap_restore_everything_including_sha(self):
+        with mock.patch.object(selfcare, "run_unit_tests", return_value={"name": "unit tests", "status": "fail", "detail": "FAILED"}):
+            ok, msg, before, after = selfcare.apply_update(log=lambda *a: None)
+        self.assertFalse(ok); self.assertIn("rolled back", msg)
+        self.assertEqual(self.read("bridge", "apollo_bridge.py"), "old"); self.assertEqual(self.read("web", "index.html"), "old")
+        self.assertEqual(self.read(".apollo-sha").strip(), SHA_A)
+        self.assertEqual(self.listing(), [".apollo-sha", "bridge", "web"])
+        self.assertEqual((before, after), (SHA_A, SHA_A))
+
+    def test_locked_live_dir_during_rollback_is_refilled_in_place(self):
+        """Windows: the new bridge/ can't be renamed away during rollback (cwd lock) - it must be emptied and refilled, not abandoned."""
+        real = os.rename
+        state = {"swapped": False}
+        def rename(src, dst):
+            if state["swapped"] and src.endswith(os.sep + "bridge") and ".backup-" in dst and dst.endswith(".failed"):
+                raise PermissionError(32, "in use")
+            if src.endswith(os.sep + "bridge.new"): state["swapped"] = True
+            return real(src, dst)
+        with mock.patch.object(selfcare.os, "rename", rename), \
+             mock.patch.object(selfcare, "run_unit_tests", return_value={"name": "unit tests", "status": "fail", "detail": "FAILED"}):
+            ok, msg, _, _ = selfcare.apply_update(log=lambda *a: None)
+        self.assertFalse(ok); self.assertIn("rolled back", msg); self.assertNotIn("ROLLBACK FAILED", msg)
+        self.assertEqual(self.read("bridge", "apollo_bridge.py"), "old")
+        self.assertEqual(self.read("bridge", "selfcare.py"), "old")
