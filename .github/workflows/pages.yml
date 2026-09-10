@@ -24,7 +24,9 @@ jobs:
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.12"
-      - run: python -m unittest discover -s tests
+      - run: |
+          python -m pip install -q "cryptography>=42"
+          python -m unittest discover -s tests
       - name: Sanity-check index.html
         run: |
           test -s web/index.html
@@ -59,8 +61,9 @@ jobs:
           STEAM_API_KEY: ${{ secrets.STEAM_API_KEY }}
           STEAM_ID: ${{ secrets.STEAM_ID }}
           SITE_PASSPHRASE: ${{ secrets.SITE_PASSPHRASE }}
+        continue-on-error: true            # a Steam hiccup must not stop the site itself from publishing
         run: |
-          python -m pip install -q cryptography
+          python -m pip install -q "cryptography>=42"
           python sync/steam_sync.py --out web/steam.json
       - uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5
       - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3

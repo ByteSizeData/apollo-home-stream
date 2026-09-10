@@ -454,8 +454,8 @@ def make_handler(bridge):
             return super().do_HEAD()
 
         def _redirect_to_pin(self, path):
-            play = parse_qs(urlparse(self.path).query).get("play", [""])[0]
-            loc = "/pin" + ("?play=%d" % int(play) if play.isdigit() and 0 < int(play) < 2 ** 31 else "")   # digits only, nothing else rides along
+            appid = parse_appid(parse_qs(urlparse(self.path).query).get("play", [""])[0])       # same validator as /api/launch: never raises
+            loc = "/pin" + ("?play=%d" % appid if appid else "")                                    # digits only, nothing else rides along
             self.send_response(302)
             self.send_header("Location", loc)
             self.send_header("Cache-Control", "no-store")

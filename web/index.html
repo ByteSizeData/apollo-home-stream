@@ -298,9 +298,12 @@ footer .in{max-width:1180px; margin:0 auto; display:flex; gap:16px; flex-wrap:wr
         <input type="password" inputmode="numeric" maxlength="1" aria-label="digit 3">
         <input type="password" inputmode="numeric" maxlength="1" aria-label="digit 4">
       </div>
+      <input type="password" id="unlockPass" hidden placeholder="passphrase" aria-label="Passphrase" autocomplete="off"
+             style="width:100%; max-width:420px; padding:12px 14px; border:1px solid var(--line); border-radius:10px; background:var(--panel-2); color:var(--text); font-family:'IBM Plex Mono',monospace; font-size:15px; outline:none">
       <div class="msg" id="unlockMsg" aria-live="polite"></div>
-      <div style="display:flex; gap:10px; align-items:center; margin-top:6px"><button type="submit" class="btn primary">Unlock</button>
-        <label style="font-size:12.5px; color:var(--muted); display:flex; gap:6px; align-items:center"><input type="checkbox" id="unlockRemember" checked style="accent-color:var(--accent)"> remember on this screen</label></div>
+      <div style="display:flex; gap:10px; align-items:center; margin-top:6px; flex-wrap:wrap"><button type="submit" class="btn primary">Unlock</button>
+        <label style="font-size:12.5px; color:var(--muted); display:flex; gap:6px; align-items:center"><input type="checkbox" id="unlockRemember" checked style="accent-color:var(--accent)"> remember on this screen</label>
+        <a href="#" id="unlockMode" style="font-size:12.5px; color:var(--accent); margin-left:auto">use a passphrase instead</a></div>
     </form>
   </div>
 
@@ -581,7 +584,7 @@ function unlockWith(pass, remember){
     showSynced(d);
   }).catch(function(){
     try{ localStorage.removeItem("apollo.sync.key"); }catch(e){}
-    $("#unlock").hidden=false; $("#unlockMsg").textContent="Wrong PIN"; [].forEach.call(document.querySelectorAll("#unlockPin input"),function(i){i.value=""}); $("#unlockPin input").focus();
+    $("#unlock").hidden=false; $("#unlockMsg").textContent=$("#unlockPass").hidden?"Wrong PIN":"Wrong passphrase"; [].forEach.call(document.querySelectorAll("#unlockPin input"),function(i){i.value=""}); $("#unlockPass").value=""; ($("#unlockPass").hidden?$("#unlockPin input"):$("#unlockPass")).focus();
   });
 }
 function bridgeStrip(){
@@ -598,6 +601,7 @@ function showSynced(d){
   $("#hostText").textContent="Synced with Steam · "+ago(d.updated).replace("today","just now");
   renderGames(); renderResume();
   $("#connect").hidden=!!BRIDGE; if(BRIDGE) $("#bridgeAddr").value=BRIDGE;
+  var lk=$("#lockBtn"); lk.hidden=false; lk.textContent="Lock this screen"; lk.onclick=function(){ try{ localStorage.removeItem("apollo.sync.key"); }catch(e){} location.reload(); };
   var c=$("#conn"); c.hidden=false; c.innerHTML='<span class="eyebrow">Steam</span><span class="c"><i class="ok"></i>'+d.totals.games+' games · '+d.totals.hours+' h total · '+d.totals.hours_2w+' h in the last two weeks</span>'+
     '<span class="c" id="bridgeState" style="margin-left:auto">'+bridgeStrip()+'</span>';
   wireBridgeChange();
@@ -886,7 +890,18 @@ Array.prototype.slice.call(document.querySelectorAll("[data-copy]")).forEach(fun
 $("#tabPlay").addEventListener("click",function(){ setTab("play") });
 (function(){
   var boxes=[].slice.call(document.querySelectorAll("#unlockPin input"));
-  function submit(){ var p=boxes.map(function(b){return b.value}).join(""); if(p.length<4) return; $("#unlockMsg").textContent=""; unlockWith(p, $("#unlockRemember").checked); }
+  var usePass=false;
+  function submit(){
+    var p = usePass ? $("#unlockPass").value : boxes.map(function(b){return b.value}).join("");
+    if(!p || (!usePass && p.length<4)) return;
+    $("#unlockMsg").textContent=""; unlockWith(p, $("#unlockRemember").checked);
+  }
+  $("#unlockMode").addEventListener("click",function(e){
+    e.preventDefault(); usePass=!usePass;
+    $("#unlockPin").hidden=usePass; $("#unlockPass").hidden=!usePass;
+    e.target.textContent=usePass?"use the 4-digit PIN instead":"use a passphrase instead";
+    (usePass?$("#unlockPass"):boxes[0]).focus();
+  });
   boxes.forEach(function(b,i){
     b.addEventListener("input",function(){ b.value=b.value.replace(/\D/g,"").slice(-1); if(b.value&&i<3) boxes[i+1].focus(); if(b.value&&i===3) submit(); });
     b.addEventListener("keydown",function(e){ if(e.key==="Backspace"&&!b.value&&i>0){ boxes[i-1].value=""; boxes[i-1].focus(); e.preventDefault(); } });
@@ -903,6 +918,7 @@ $("#tabPlay").addEventListener("click",function(){ setTab("play") });
 $("#tabInstall").addEventListener("click",function(){ setTab("install") });
 $("#tabPower").addEventListener("click",function(){ setTab("power") });
 $("#lockBtn").addEventListener("click",function(){
+  if(SYNCED) return;                                                          // synced mode has its own handler (forget the remembered PIN)
   fetch("/api/logout",{method:"POST"}).catch(function(){}).then(function(){ location.replace("/pin"); });
 });
 var gp=$("#gotoPower"); if(gp) gp.addEventListener("click",function(){ setTab("power") });

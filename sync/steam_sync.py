@@ -97,8 +97,14 @@ def main(argv=None):
     if not key or not ident:
         print("STEAM_API_KEY and STEAM_ID are not both set - nothing to sync (that's fine until you add them).")
         return 0
-    steamid = resolve_steamid(key, ident)
-    data = fetch(key, steamid)
+    try:
+        steamid = resolve_steamid(key, ident)
+        data = fetch(key, steamid)
+    except SystemExit:
+        raise
+    except Exception as e:  # noqa: BLE001 - the site still deploys; the library just isn't refreshed this time
+        print("Steam sync skipped this run: %s (%s). The site deploys without a fresh library." % (type(e).__name__, str(e)[:120]))
+        return 0
     out = data if args.plain else encrypt(data, passphrase)
     os.makedirs(os.path.dirname(os.path.abspath(args.out)), exist_ok=True)
     with open(args.out, "w", encoding="utf-8") as f:

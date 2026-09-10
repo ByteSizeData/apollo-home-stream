@@ -139,7 +139,8 @@ class HttpGate(unittest.TestCase):
         self.assertEqual(st, 302)                            # pages bounce to the PIN screen
         self.assertEqual(hd.get("Location"), "/pin")
         self.assertEqual(body, b"")
-        for path in ("/index.html", "//evil.example/x", "/%5Cevil.example/", "/anything?next=/%5Cevil/", "/?play=abc", "/?play=-1", "/?play=99999999999"):
+        for path in ("/index.html", "//evil.example/x", "/%5Cevil.example/", "/anything?next=/%5Cevil/", "/?play=abc", "/?play=-1", "/?play=99999999999",
+                     "/?play=%C2%B2", "/?play=%E2%91%A0", "/?play=" + "9" * 5000):                  # unicode "digits" and absurd lengths must not crash
             st, hd, _ = self.req("GET", path)
             self.assertEqual((st, hd.get("Location")), (302, "/pin"), path)   # never a ?next=, never an open redirect
         st, hd, _ = self.req("GET", "/?play=1091500&next=//evil")

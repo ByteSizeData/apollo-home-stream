@@ -15,6 +15,8 @@ try:
     HAVE_CRYPTO = True
 except ImportError:
     HAVE_CRYPTO = False
+if not HAVE_CRYPTO and os.environ.get("CI"):
+    raise RuntimeError("cryptography is missing in CI - the encryption tests must not be skipped there")
 
 SID = "76561198012345678"
 
