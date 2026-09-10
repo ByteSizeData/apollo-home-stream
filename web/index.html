@@ -99,9 +99,15 @@ h2.sec{font-family:"Archivo",sans-serif; font-stretch:116%; font-weight:700; fon
 
 /* ---- live data ---- */
 .demo{
-  display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin:0 0 18px;
-  border:1px dashed color-mix(in srgb,var(--warn) 55%,var(--line)); border-radius:10px; padding:11px 14px; font-size:13px; color:var(--muted);
+  margin:0 0 28px; border:1px solid color-mix(in srgb,var(--warn) 55%,var(--line)); border-left:4px solid var(--warn);
+  border-radius:12px; padding:18px 20px; background:color-mix(in srgb,var(--warn) 6%,var(--panel)); color:var(--muted); font-size:13.5px;
 }
+.demo h2{font-family:"Archivo",sans-serif; font-stretch:116%; font-weight:700; font-size:17px; text-transform:uppercase; color:var(--text); margin:0 0 6px}
+.demo p{margin:0 0 12px; max-width:70ch}
+.demo ol{margin:0; padding:0 0 0 20px; display:flex; flex-direction:column; gap:8px}
+.demo li{color:var(--text)}
+.demo li span{color:var(--muted)}
+.demo .cmd{margin:6px 0 2px; max-width:560px}
 .demo b{color:var(--text)}
 .demo code{font-family:"IBM Plex Mono",monospace; font-size:12px; background:var(--panel-2); border:1px solid var(--line-soft); border-radius:4px; padding:1px 6px}
 
@@ -244,14 +250,25 @@ footer .in{max-width:1180px; margin:0 auto; display:flex; gap:16px; flex-wrap:wr
     <button type="button" role="tab" id="tabInstall" aria-selected="false" aria-controls="viewInstall">Install</button>
     <button type="button" role="tab" id="tabPower" aria-selected="false" aria-controls="viewPower">Sleep &amp; wake</button>
   </div>
-  <div class="host" id="hostBox"><span class="lamp off" id="hostLamp"></span><span id="hostText">Sample library</span></div>
+  <div class="host" id="hostBox"><span class="lamp off" id="hostLamp"></span><span id="hostText">Demo · not connected to a PC</span></div>
 </div>
 
 <!-- ============ PLAY ============ -->
 <div class="wrap" id="viewPlay" role="tabpanel" aria-labelledby="tabPlay">
   <div class="demo" id="demoBanner" hidden>
-    <b>Sample library.</b> <span>Run the bridge on your gaming PC and open this page from it to see your real games:</span>
-    <code>python bridge/apollo_bridge.py</code>
+    <h2>This copy isn't connected to your PC</h2>
+    <p>What you see below is a <b>sample</b>. A website can't see your gaming PC, your Steam sign-in or your library —
+    only the small bridge program running <b>on that PC</b> can. Do this once, on the gaming PC:</p>
+    <ol>
+      <li>Get the code <span>(needs Python and git installed)</span>
+        <div class="cmd"><code id="dc1">git clone https://github.com/ByteSizeData/apollo-home-stream</code><button type="button" data-copy="dc1">Copy</button></div></li>
+      <li>Start the bridge <span>— it prints the address to open</span>
+        <div class="cmd"><code id="dc2">cd apollo-home-stream &amp;&amp; python bridge/apollo_bridge.py</code><button type="button" data-copy="dc2">Copy</button></div></li>
+      <li>Open that address from any screen in the house <span>— it looks like <b>http://your-pc-name:8777</b> — and enter PIN <b>2550</b>.
+        Your Steam name appears in the top-right corner and this page fills with your real games.</span></li>
+    </ol>
+    <p style="margin:14px 0 0">Want it synced with Steam itself — what you played last on any device, current stats, games you own but haven't installed?
+    Run <code class="k">python bridge/apollo_bridge.py --set-steam-key YOURKEY</code> once (key from steamcommunity.com/dev/apikey). Details on the <b>Install</b> tab.</p>
   </div>
 
   <div class="resume">
@@ -491,7 +508,7 @@ function loadLive(){
     $("#demoBanner").hidden=LIVE;
     var cb=$("#conn"); cb.hidden=false; cb.innerHTML='<span class="eyebrow">Connections</span><span class="c" style="color:var(--dim)">checking...</span>';
     renderGames(); renderResume(); loadHealth(); loadOwned();
-  }).catch(function(){ $("#demoBanner").hidden=false; $("#hostText").textContent="Sample library"; $("#hostLamp").className="lamp off"; });
+  }).catch(function(){ $("#demoBanner").hidden=false; $("#hostText").textContent="Demo · not connected to a PC"; $("#hostLamp").className="lamp off"; });
 }
 
 function showAccount(a){
