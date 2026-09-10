@@ -139,9 +139,11 @@ class HttpGate(unittest.TestCase):
         self.assertEqual(st, 302)                            # pages bounce to the PIN screen
         self.assertEqual(hd.get("Location"), "/pin")
         self.assertEqual(body, b"")
-        for path in ("/index.html", "//evil.example/x", "/%5Cevil.example/", "/anything?next=/%5Cevil/"):
+        for path in ("/index.html", "//evil.example/x", "/%5Cevil.example/", "/anything?next=/%5Cevil/", "/?play=abc", "/?play=-1", "/?play=99999999999"):
             st, hd, _ = self.req("GET", path)
             self.assertEqual((st, hd.get("Location")), (302, "/pin"), path)   # never a ?next=, never an open redirect
+        st, hd, _ = self.req("GET", "/?play=1091500&next=//evil")
+        self.assertEqual((st, hd.get("Location")), (302, "/pin?play=1091500"))   # a numeric app id is the only passenger
         self.assertEqual(self.req("GET", "/api/games")[0], 401)   # APIs answer 401, not a redirect
         self.assertEqual(self.req("GET", "/api/host")[0], 401)
         st, hd, _ = self.req("HEAD", "/index.html")
@@ -224,7 +226,7 @@ class HttpGate(unittest.TestCase):
     def test_pin_page_has_no_next_redirect(self):
         _, _, body = self.req("GET", "/pin")
         self.assertNotIn(b"URLSearchParams", body)       # the client never reads a redirect target…
-        self.assertIn(b"location.replace('/')", body)   # …it always goes home
+        self.assertIn(b"location.replace(m?'/?play='+m[1]:'/')", body)   # ...only a numeric app id may ride along, else home
 
     def test_pin_page_never_leaks_the_pin(self):
         _, _, body = self.req("GET", "/pin")

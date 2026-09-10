@@ -36,7 +36,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import selfcare  # noqa: E402  (health checks, self-test, self-update)
 import steamaccount  # noqa: E402  (who's signed in, hours played, optional Web API)
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 WEB_DIR = os.path.join(os.path.dirname(HERE), "web")
@@ -454,8 +454,10 @@ def make_handler(bridge):
             return super().do_HEAD()
 
         def _redirect_to_pin(self, path):
+            play = parse_qs(urlparse(self.path).query).get("play", [""])[0]
+            loc = "/pin" + ("?play=%d" % int(play) if play.isdigit() and 0 < int(play) < 2 ** 31 else "")   # digits only, nothing else rides along
             self.send_response(302)
-            self.send_header("Location", "/pin")   # never carry a ?next= — the app is one page
+            self.send_header("Location", loc)
             self.send_header("Cache-Control", "no-store")
             self.send_header("Content-Length", "0")
             self.end_headers()

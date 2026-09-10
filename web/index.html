@@ -721,6 +721,8 @@ function renderResume(){
   $("#resumeTitle").textContent=gm.title;
   $("#resumeSub").textContent = LIVE
     ? "On "+HOST.name+(gm.hours?" · "+gm.hours+" h played":"")+(gm.hours2w?" · "+gm.hours2w+" h in the last two weeks":"")+" · last played "+ago(gm.last)+(gm.size?" · "+(gm.size/1e9).toFixed(gm.size>1e10?0:1)+" GB":"")
+    : SYNCED
+    ? "Last played "+ago(gm.last)+(gm.hours?" · "+gm.hours+" h played":"")+(gm.hours2w?" · "+gm.hours2w+" h in the last two weeks":"")+(BRIDGE?"":" · connect this screen to your PC to stream")
     : "Sample game — run the bridge on your gaming PC to see your own.";
   $("#resumeBtn").textContent="▶ Stream "+gm.title;
   var art=$("#resumeArt"); art.innerHTML=""; art.className="rart"; cover(art,gm,false);
@@ -732,7 +734,7 @@ function renderGames(){
     b.setAttribute("aria-label","Play "+gm.title+(i<8?" (key "+(i+1)+")":""));
     var art=document.createElement("div"); art.className="art"; cover(art,gm,true);
     var h=document.createElement("h3"); h.textContent=gm.title;
-    var meta=document.createElement("div"); meta.className="meta"; meta.textContent=LIVE?((gm.hours?gm.hours+" h · ":"")+ago(gm.last)):gm.hours+" h played";
+    var meta=document.createElement("div"); meta.className="meta"; meta.textContent=(LIVE||SYNCED)?((gm.hours?gm.hours+" h · ":"")+ago(gm.last)):gm.hours+" h played";
     b.appendChild(art); b.appendChild(h); b.appendChild(meta);
     b.addEventListener("click",function(){ if(SYNCED) streamViaBridge(gm); else play(gm.id); });
     host.appendChild(b);
