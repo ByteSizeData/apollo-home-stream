@@ -529,6 +529,23 @@ class Server(ThreadingHTTPServer):
         super().server_bind()
 
 
+def bridge_addresses(port):
+    """Every way a device on the network can reach this bridge - hostname first, then the LAN IP."""
+    out = []
+    host = socket.gethostname()
+    if host:
+        out.append("http://%s:%d" % (host if "." in host or platform.system() != "Darwin" else host + ".local", port))
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("10.255.255.255", 1))            # no packets sent; just picks the outbound interface
+        ip = s.getsockname()[0]; s.close()
+        if ip and not ip.startswith("127."):
+            out.append("http://%s:%d" % (ip, port))
+    except OSError:
+        pass
+    return out or ["http://localhost:%d" % port]
+
+
 def restart(new_sha):
     """Re-run this process with the same arguments. On Windows os.execv mangles quoting, so spawn instead."""
     env = dict(os.environ, APOLLO_RESTARTED_FOR=new_sha or "")   # one restart per version, never a loop
@@ -657,10 +674,21 @@ def main():
         print("stop the other one, or start this one with --port 8778")
         sys.exit(1)
     srv = Server((args.bind, args.port), make_handler(bridge))
-    print("Apollo bridge on http://%s:%d  (Steam: %s, %d games)" % (args.name, args.port, steam, len(bridge.games())))
+    for addr in bridge_addresses(args.port):
+        print("Apollo bridge on %s" % addr)
+    print("Shown as \"%s\"  (Steam: %s, %d games)" % (args.name, steam, len(bridge.games())))
     print("PIN gate: %s" % ("on" if bridge.gated else "OFF - anyone who can reach this port can launch games"))
     print("Steam sync: %s" % ("on - library and stats refresh from Steam every %d min" % (steamaccount.SteamAccount.REFRESH_EVERY // 60)
                               if steam_key and not args.no_network else "off - showing this PC's own record (run --set-steam-key KEY to sync)"))
+    try:
+        ts = selfcare.check_tailscale()
+        if ts["status"] == "ok":
+            name = ts["detail"].split(" / ")[-1].strip() or ts["detail"].split(" / ")[0].strip()
+            print("Away from home (Tailscale): http://%s:%d   <- use THIS address on phones and laptops; it works at home too" % (name, args.port))
+        else:
+            print("Tailscale: %s" % ts["detail"])
+    except Exception:  # noqa: BLE001 - purely informational
+        pass
     print("Open that address from any device on your network or tailnet. Ctrl-C to stop.")
     try:
         srv.serve_forever()

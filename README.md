@@ -10,8 +10,8 @@ A small web page and a tiny bridge service for [Apollo](https://github.com/Class
 
 - **Play** — your real Steam library, most-recently-played first, with a Launch button that
   starts the game on the gaming PC. Then you connect with Artemis or Moonlight to see it.
-- **Install** — Apollo on the PC, the right client for each device, pairing (and the
-  permissions trap), and Tailscale for playing from the road.
+- **Install** — three installs: Apollo on the PC, the right client for each device, and
+  **Tailscale on both** (that's what makes it work from the road), plus pairing and its permissions trap.
 - **Sleep & wake** — set the PC to sleep-and-wake-on-demand or always-awake, with the exact
   Windows and Mac commands.
 
@@ -35,6 +35,10 @@ Then from any screen on your network — or your tailnet — open:
 ```
 http://<your-pc-name>:8777
 ```
+
+The bridge prints that address when it starts - and, if Tailscale is running, the Tailscale
+address too. **Use the Tailscale address on phones and laptops**: it works at home and on the
+road, so each screen is set up once.
 
 You'll be asked for a PIN — **2550** out of the box. Enter it once per device and that screen
 stays unlocked for 30 days (or until you press *Lock this screen*).
