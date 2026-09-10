@@ -161,7 +161,8 @@ class HttpGate(unittest.TestCase):
         self.assertEqual(json.loads(body)["games"][0]["title"], "Stardew Valley")
         st, _, body = self.req("GET", "/", cookie=tok)
         self.assertEqual(st, 200)
-        self.assertNotIn(b"Enter your PIN", body)
+        self.assertNotIn(b"<title>Apollo \xe2\x80\x94 PIN</title>", body)     # the app, not the PIN screen
+        self.assertIn(b"<title>Apollo Home Stream</title>", body)
         st, _, body = self.req("POST", "/api/launch", {"appid": 413150}, cookie=tok)
         self.assertEqual(st, 200)
         self.assertTrue(json.loads(body)["ok"])

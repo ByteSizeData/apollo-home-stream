@@ -125,6 +125,26 @@ uninstalled. That record only knows about this PC, so play on another device won
 
 Both tiers sit behind the PIN like everything else.
 
+## Show your account on the website
+
+The public site can't see your PC. It *can* carry a copy of your Steam library that GitHub
+refreshes from Steam **every 30 minutes** - what you played last on any device, hours, the last
+two weeks, your avatar - encrypted with your PIN so only you can read it. Then every screen in
+the house opens the same link, enters the PIN, and gets a **Stream** button on every game.
+
+1. Get a Web API key at https://steamcommunity.com/dev/apikey and find your Steam ID
+   (your profile URL: the 17-digit number, or the custom name after `/id/`).
+2. In the GitHub repo: **Settings → Secrets and variables → Actions → New repository secret**, add:
+   - `STEAM_API_KEY` - the key
+   - `STEAM_ID` - the 17-digit id, the profile URL, or the custom name
+   - `SITE_PASSPHRASE` - optional. Leave it out to unlock with the PIN (2550). A longer
+     passphrase is much stronger; the site is public, and a 4-digit PIN only keeps casual eyes out.
+3. **Actions → publish site → Run workflow** once. From then on it refreshes itself.
+
+Then on each screen: open the site, enter the PIN, and - the first time - paste the bridge
+address the PC prints when it starts (`http://your-pc-name:8777`). After that, **Stream** on any
+game hands it to the PC, which launches it and tells you which client to open.
+
 ## Keeping it working
 
 **Self-test.** Run this after installing, and any time something feels off:

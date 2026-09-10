@@ -150,6 +150,22 @@ h2.sec{font-family:"Archivo",sans-serif; font-stretch:116%; font-weight:700; fon
 .owned .sec small{font-family:"IBM Plex Mono",monospace; font-size:11px; color:var(--dim); text-transform:none; letter-spacing:0; font-weight:400}
 .game .meta.inst{color:var(--accent)}
 
+/* ---- synced mode (public site, data from Steam) ---- */
+.unlock{border:1px solid var(--line); border-radius:14px; background:var(--panel); padding:26px 24px; margin:0 0 28px; display:flex; flex-direction:column; gap:14px; align-items:flex-start; max-width:560px}
+.unlock h2{font-family:"Archivo",sans-serif; font-stretch:116%; font-weight:700; font-size:18px; text-transform:uppercase; margin:0}
+.unlock p{margin:0; color:var(--muted); font-size:13.5px}
+.unlock .pin{display:flex; gap:10px}
+.unlock .pin input{width:52px; height:60px; text-align:center; font-family:"IBM Plex Mono",monospace; font-size:26px; font-weight:600; border:1px solid var(--line); border-radius:10px; background:var(--panel-2); color:var(--text); outline:none; caret-color:transparent}
+.unlock .pin input:focus{border-color:var(--accent); box-shadow:0 0 0 3px var(--glow)}
+.unlock .msg{min-height:18px; font-size:13px; color:var(--crit)}
+.connect{border:1px solid color-mix(in srgb,var(--accent) 45%,var(--line)); background:color-mix(in srgb,var(--accent) 7%,transparent); border-radius:12px; padding:16px 18px; margin:0 0 26px; display:flex; flex-direction:column; gap:10px}
+.connect h3{margin:0; font-size:15px; font-weight:700}
+.connect p{margin:0; color:var(--muted); font-size:13px}
+.connect .row{display:flex; gap:8px; flex-wrap:wrap; align-items:center}
+.connect input{flex:1; min-width:220px; padding:10px 12px; border:1px solid var(--line); border-radius:8px; background:var(--panel-2); color:var(--text); font-family:"IBM Plex Mono",monospace; font-size:13px; outline:none}
+.connect input:focus{border-color:var(--accent)}
+.connect .ok{color:var(--ok); font-size:12.5px}
+
 /* ---- install ---- */
 .stepnum{
   display:inline-grid; place-items:center; width:26px; height:26px; border-radius:50%; flex:none;
@@ -269,6 +285,29 @@ footer .in{max-width:1180px; margin:0 auto; display:flex; gap:16px; flex-wrap:wr
     </ol>
     <p style="margin:14px 0 0">Want it synced with Steam itself — what you played last on any device, current stats, games you own but haven't installed?
     Run <code class="k">python bridge/apollo_bridge.py --set-steam-key YOURKEY</code> once (key from steamcommunity.com/dev/apikey). Details on the <b>Install</b> tab.</p>
+  </div>
+
+  <div class="unlock" id="unlock" hidden>
+    <span class="eyebrow">Your Steam library · synced</span>
+    <h2>Enter your PIN</h2>
+    <p id="unlockSub">This copy of your library was synced from Steam and is locked. Same PIN as the bridge.</p>
+    <form id="unlockForm" autocomplete="off">
+      <div class="pin" id="unlockPin">
+        <input type="password" inputmode="numeric" maxlength="1" aria-label="digit 1">
+        <input type="password" inputmode="numeric" maxlength="1" aria-label="digit 2">
+        <input type="password" inputmode="numeric" maxlength="1" aria-label="digit 3">
+        <input type="password" inputmode="numeric" maxlength="1" aria-label="digit 4">
+      </div>
+      <div class="msg" id="unlockMsg" aria-live="polite"></div>
+      <div style="display:flex; gap:10px; align-items:center; margin-top:6px"><button type="submit" class="btn primary">Unlock</button>
+        <label style="font-size:12.5px; color:var(--muted); display:flex; gap:6px; align-items:center"><input type="checkbox" id="unlockRemember" checked style="accent-color:var(--accent)"> remember on this screen</label></div>
+    </form>
+  </div>
+
+  <div class="connect" id="connect" hidden>
+    <h3>Connect this screen to your gaming PC</h3>
+    <p>To stream, this screen needs the address the bridge prints when it starts on the PC - it looks like <b>http://your-pc-name:8777</b>. Enter it once; it's remembered here.</p>
+    <div class="row"><input id="bridgeAddr" placeholder="http://gaming-station:8777" aria-label="Bridge address"><button type="button" class="btn primary" id="bridgeSave">Save</button><span class="ok" id="bridgeOk"></span></div>
   </div>
 
   <div class="resume">
@@ -473,7 +512,11 @@ var GAMES=[
   G("cinder","Cinderhold","Ash & Ember",8,320,3,23)
 ];
 var DEMO=GAMES.slice();           // the invented library, used only when no bridge answers
-var LIVE=false;                    // true once /api/games has answered
+var LIVE=false;                    // true once /api/games has answered (this page is served by the bridge)
+var SYNCED=false;                  // true when the public site has your Steam library baked in (steam.json)
+var BRIDGE=null;                   // saved bridge address on this screen (synced mode), e.g. http://gaming-station:8777
+try{ BRIDGE=localStorage.getItem("apollo.bridge")||null; }catch(e){}
+function bridgeNormalize(v){ v=(v||"").trim(); if(!v) return ""; if(!/^https?:\/\//i.test(v)) v="http://"+v; if(!/:\d+(\/|$)/.test(v)) v=v.replace(/\/?$/,"")+":8777"; return v.replace(/\/+$/,""); }
 function game(id){ return GAMES.filter(function(g){return String(g.id)===String(id)})[0]||GAMES[0] }
 function ago(ts){
   if(!ts) return "never played";
@@ -508,9 +551,61 @@ function loadLive(){
     $("#demoBanner").hidden=LIVE;
     var cb=$("#conn"); cb.hidden=false; cb.innerHTML='<span class="eyebrow">Connections</span><span class="c" style="color:var(--dim)">checking...</span>';
     renderGames(); renderResume(); loadHealth(); loadOwned();
-  }).catch(function(){ $("#demoBanner").hidden=false; $("#hostText").textContent="Demo · not connected to a PC"; $("#hostLamp").className="lamp off"; });
+    var want=new URLSearchParams(location.search).get("play");                 // handed over from the synced site: stream this one now
+    if(want){ history.replaceState(null,"",location.pathname); var g=GAMES.filter(function(x){return String(x.appid)===String(want)})[0];
+      if(g) play(g.id); else fetch("/api/account",{cache:"no-store"}).then(function(r){return r.ok?r.json():null}).then(function(a){ var o=a&&a.also_owned&&a.also_owned.filter(function(x){return String(x.appid)===String(want)})[0]; if(o) installGame(o); }); }
+  }).catch(function(){ loadSynced(); });
 }
 
+/* ---------- synced mode: the public site with your Steam library baked in ---------- */
+var SYNC=null;
+function loadSynced(){
+  fetch("steam.json",{cache:"no-store"}).then(function(r){ return r.ok?r.json():null; }).catch(function(){return null}).then(function(blob){
+    if(!blob||!blob.data){ $("#demoBanner").hidden=false; $("#hostText").textContent="Demo · not connected to a PC"; $("#hostLamp").className="lamp off"; return; }
+    SYNC=blob;
+    $("#hostText").textContent=(blob.persona||"Steam")+" · synced "+ago(blob.updated).replace("today","recently"); $("#hostLamp").className="lamp";
+    var saved=null; try{ saved=localStorage.getItem("apollo.sync.key"); }catch(e){}
+    if(saved){ unlockWith(saved,false); } else { $("#unlock").hidden=false; $("#unlockPin input").focus(); }
+  });
+}
+function b64(s){ var bin=atob(s), a=new Uint8Array(bin.length); for(var i=0;i<bin.length;i++) a[i]=bin.charCodeAt(i); return a; }
+function unlockWith(pass, remember){
+  if(!window.crypto||!crypto.subtle){ $("#unlock").hidden=false; $("#unlockMsg").textContent="This browser can't decrypt here (needs HTTPS or a newer browser)."; return; }
+  var enc=new TextEncoder();
+  crypto.subtle.importKey("raw",enc.encode(pass),"PBKDF2",false,["deriveKey"]).then(function(k){
+    return crypto.subtle.deriveKey({name:"PBKDF2",salt:b64(SYNC.salt),iterations:SYNC.iter,hash:"SHA-256"},k,{name:"AES-GCM",length:256},false,["decrypt"]);
+  }).then(function(key){ return crypto.subtle.decrypt({name:"AES-GCM",iv:b64(SYNC.iv)},key,b64(SYNC.data)); })
+  .then(function(buf){
+    var d=JSON.parse(new TextDecoder().decode(buf));
+    if(remember){ try{ localStorage.setItem("apollo.sync.key",pass); }catch(e){} }
+    showSynced(d);
+  }).catch(function(){
+    try{ localStorage.removeItem("apollo.sync.key"); }catch(e){}
+    $("#unlock").hidden=false; $("#unlockMsg").textContent="Wrong PIN"; [].forEach.call(document.querySelectorAll("#unlockPin input"),function(i){i.value=""}); $("#unlockPin input").focus();
+  });
+}
+function bridgeStrip(){
+  return BRIDGE ? '<i class="ok"></i>streams to '+BRIDGE.replace(/^https?:\/\//,"")+' · <a href="#" id="bridgeChange" style="color:var(--accent)">change</a>' : '<i class="warn"></i>not connected to your PC yet';
+}
+function wireBridgeChange(){ var ch=$("#bridgeChange"); if(ch) ch.addEventListener("click",function(e){ e.preventDefault(); $("#connect").hidden=false; $("#bridgeAddr").focus(); }); }
+function showSynced(d){
+  SYNCED=true; $("#unlock").hidden=true; $("#demoBanner").hidden=true;
+  GAMES=d.games.slice(0,60).map(function(g){ var h=(g.appid*2654435761)>>>0; return {id:String(g.appid), appid:g.appid, title:g.title, studio:"Steam", h1:h%360, h2:(h>>8)%360, pat:g.appid%4,
+    hours:g.minutes?Math.round(g.minutes/6)/10:0, hours2w:g.minutes_2w?Math.round(g.minutes_2w/6)/10:0, last:g.last_played, cover:g.cover}; });
+  if(!GAMES.length){ GAMES=DEMO; }
+  S.last=GAMES[0].id; save();
+  showAccount({connected:true, persona:d.persona, avatar:d.avatar, source:"web", web_updated:d.updated});
+  $("#hostText").textContent="Synced with Steam · "+ago(d.updated).replace("today","just now");
+  renderGames(); renderResume();
+  $("#connect").hidden=!!BRIDGE; if(BRIDGE) $("#bridgeAddr").value=BRIDGE;
+  var c=$("#conn"); c.hidden=false; c.innerHTML='<span class="eyebrow">Steam</span><span class="c"><i class="ok"></i>'+d.totals.games+' games · '+d.totals.hours+' h total · '+d.totals.hours_2w+' h in the last two weeks</span>'+
+    '<span class="c" id="bridgeState" style="margin-left:auto">'+bridgeStrip()+'</span>';
+  wireBridgeChange();
+}
+function streamViaBridge(gm){
+  if(!BRIDGE){ $("#connect").hidden=false; $("#bridgeAddr").focus(); $("#bridgeOk").textContent="Enter the bridge address first"; return; }
+  location.href=BRIDGE+"/?play="+encodeURIComponent(gm.appid);              // the bridge page launches it on the PC and tells you which client to open
+}
 function showAccount(a){
   var box=$("#hostBox"); if(!box) return;
   Array.prototype.slice.call(box.querySelectorAll(".av,.who")).forEach(function(n){n.remove()});
@@ -627,7 +722,7 @@ function renderResume(){
   $("#resumeSub").textContent = LIVE
     ? "On "+HOST.name+(gm.hours?" · "+gm.hours+" h played":"")+(gm.hours2w?" · "+gm.hours2w+" h in the last two weeks":"")+" · last played "+ago(gm.last)+(gm.size?" · "+(gm.size/1e9).toFixed(gm.size>1e10?0:1)+" GB":"")
     : "Sample game — run the bridge on your gaming PC to see your own.";
-  $("#resumeBtn").textContent=(LIVE?"▶ Play ":"▶ Play ")+gm.title;
+  $("#resumeBtn").textContent="▶ Stream "+gm.title;
   var art=$("#resumeArt"); art.innerHTML=""; art.className="rart"; cover(art,gm,false);
 }
 function renderGames(){
@@ -639,7 +734,7 @@ function renderGames(){
     var h=document.createElement("h3"); h.textContent=gm.title;
     var meta=document.createElement("div"); meta.className="meta"; meta.textContent=LIVE?((gm.hours?gm.hours+" h · ":"")+ago(gm.last)):gm.hours+" h played";
     b.appendChild(art); b.appendChild(h); b.appendChild(meta);
-    b.addEventListener("click",function(){ play(gm.id) });
+    b.addEventListener("click",function(){ if(SYNCED) streamViaBridge(gm); else play(gm.id); });
     host.appendChild(b);
   });
 }
@@ -741,7 +836,7 @@ function play(id){
   $("#stageBar").style.width="0%";
   var steps=LIVE ? [
     {s:"Starting "+gm.title, u:"on "+HOST.name, p:40},
-    {s:"Now open Artemis or Moonlight", u:"pick "+HOST.name+" — "+gm.title+" is on its screen", p:100}
+    {s:"Streaming "+gm.title, u:"open Artemis or Moonlight on this screen and pick "+HOST.name, p:100}
   ] : [
     {s:"Starting "+gm.title, u:"on "+HOST.name, p:45},
     {s:"Now open Artemis or Moonlight", u:"this is a sample — nothing was launched", p:100}
@@ -787,6 +882,22 @@ Array.prototype.slice.call(document.querySelectorAll("[data-copy]")).forEach(fun
 
 /* ---- wiring ---- */
 $("#tabPlay").addEventListener("click",function(){ setTab("play") });
+(function(){
+  var boxes=[].slice.call(document.querySelectorAll("#unlockPin input"));
+  function submit(){ var p=boxes.map(function(b){return b.value}).join(""); if(p.length<4) return; $("#unlockMsg").textContent=""; unlockWith(p, $("#unlockRemember").checked); }
+  boxes.forEach(function(b,i){
+    b.addEventListener("input",function(){ b.value=b.value.replace(/\D/g,"").slice(-1); if(b.value&&i<3) boxes[i+1].focus(); if(b.value&&i===3) submit(); });
+    b.addEventListener("keydown",function(e){ if(e.key==="Backspace"&&!b.value&&i>0){ boxes[i-1].value=""; boxes[i-1].focus(); e.preventDefault(); } });
+  });
+  $("#unlockForm").addEventListener("submit",function(e){ e.preventDefault(); submit(); });
+  $("#bridgeSave").addEventListener("click",function(){
+    var v=bridgeNormalize($("#bridgeAddr").value); if(!v){ $("#bridgeOk").textContent="Enter an address like http://gaming-station:8777"; return; }
+    BRIDGE=v; try{ localStorage.setItem("apollo.bridge",v); }catch(e){}
+    $("#bridgeOk").textContent="Saved"; $("#connect").hidden=true;
+    var st=$("#bridgeState"); if(st){ st.innerHTML=bridgeStrip(); wireBridgeChange(); }
+  });
+  $("#bridgeAddr").addEventListener("keydown",function(e){ if(e.key==="Enter"){ e.preventDefault(); $("#bridgeSave").click(); } });
+})();
 $("#tabInstall").addEventListener("click",function(){ setTab("install") });
 $("#tabPower").addEventListener("click",function(){ setTab("power") });
 $("#lockBtn").addEventListener("click",function(){
@@ -795,7 +906,7 @@ $("#lockBtn").addEventListener("click",function(){
 var gp=$("#gotoPower"); if(gp) gp.addEventListener("click",function(){ setTab("power") });
 $("#modeSleep").addEventListener("click",function(){ S.mode="sleep"; save(); renderPower(); });
 $("#modeAwake").addEventListener("click",function(){ S.mode="awake"; save(); renderPower(); });
-$("#resumeBtn").addEventListener("click",function(){ play(S.last) });
+$("#resumeBtn").addEventListener("click",function(){ if(SYNCED) streamViaBridge(game(S.last)); else play(S.last); });
 $("#stageClose").addEventListener("click",stop);
 $("#launch").addEventListener("click",function(e){ if(e.target===this) stop() });
 document.addEventListener("keydown",function(e){

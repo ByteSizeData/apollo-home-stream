@@ -6,3 +6,4 @@ __pycache__/
 
 # public Steam app list, cached by the bridge
 .cache/
+web/steam.json
