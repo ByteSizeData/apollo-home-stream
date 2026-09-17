@@ -22,8 +22,8 @@ jobs:
     name: tests must pass before anything goes live
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
       - run: |
@@ -52,14 +52,19 @@ jobs:
       contents: read
       pages: write
       id-token: write
+      actions: write      # re-arm the schedule (GitHub disables schedules after 60 quiet days)
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
+      - id: pages
+        uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+      - name: Publish the installer at a short address
+        run: cp install/windows.ps1 web/install.ps1
       - name: Sync your Steam library into the site (skips until the secrets exist)
         id: sync
         env:
@@ -70,22 +75,54 @@ jobs:
         continue-on-error: true            # a Steam hiccup must not stop the site itself from publishing
         run: |
           python -m pip install -q "cryptography>=42"
-          python sync/steam_sync.py --out web/steam.json
-      - uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5
-      - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3
+          python sync/steam_sync.py --out web/steam.json --status web/sync-status.json
+      - name: Steam said no - keep the last good library instead of publishing an empty site
+        if: ${{ steps.sync.outcome == 'failure' }}
+        continue-on-error: true
+        run: |
+          curl -fsS --retry 3 --max-time 30 "${{ steps.pages.outputs.base_url }}/steam.json" -o /tmp/last.json
+          python - <<'PY'
+          import json, shutil
+          b = json.load(open("/tmp/last.json"))
+          assert b.get("data") and b.get("updated"), "the last published library is not usable"
+          shutil.copy("/tmp/last.json", "web/steam.json")
+          print("kept the library last synced at", b["updated"])
+          PY
+      - name: Keep this schedule alive
+        if: ${{ github.event_name == 'schedule' }}
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api -X PUT "repos/${{ github.repository }}/actions/workflows/pages.yml/enable" && echo "schedule re-armed"
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: web
       - id: deployment
-        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
 
   sync-alert:
-    # The site still published - but if Steam refused the sync, fail THIS job so GitHub emails you.
-    # (A revoked key would otherwise leave the library stale forever behind green check marks.)
+    # One issue, opened when the Steam sync breaks and closed when it recovers: GitHub emails you once, not six times a day.
     name: Steam sync health
     needs: deploy
-    if: ${{ always() && needs.deploy.outputs.sync == 'failure' }}
+    if: ${{ always() && needs.deploy.result != 'skipped' }}
     runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      SYNC: ${{ needs.deploy.outputs.sync }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
-      - run: |
-          echo "::error title=Steam sync failed::The site deployed, but your Steam library was NOT refreshed. Most likely the Steam Web API key was revoked or mistyped - update the STEAM_API_KEY secret (Settings > Secrets and variables > Actions), then run this workflow again."
-          exit 1
+      - name: Open or close the "Steam sync is broken" issue
+        run: |
+          n=$(gh issue list -R "$REPO" --state open --search 'in:title "Steam sync is broken"' --json number --jq '.[0].number // empty')
+          if [ "$SYNC" = "failure" ]; then
+            if [ -z "$n" ]; then
+              gh issue create -R "$REPO" --title "Steam sync is broken" --body "The site still published with the last good library, but Steam refused or did not answer the scheduled sync. Most likely the Steam Web API key was revoked or mistyped: update the STEAM_API_KEY secret (Settings > Secrets and variables > Actions), then run the publish site workflow. This issue closes itself when a sync succeeds. Run: $RUN_URL"
+            else
+              echo "issue #$n is already open"
+            fi
+          elif [ -n "$n" ]; then
+            gh issue close -R "$REPO" "$n" --comment "A sync succeeded - all good again."
+          fi

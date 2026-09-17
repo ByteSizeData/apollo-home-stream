@@ -7,3 +7,7 @@ __pycache__/
 # public Steam app list, cached by the bridge
 .cache/
 web/steam.json
+
+# published copy of the installer (built by the Pages workflow)
+web/install.ps1
+web/sync-status.json

@@ -131,3 +131,55 @@ class BridgeUrlAndAlerts(unittest.TestCase):
                 rc = ss.main(["--out", os.path.join(d, "steam.json")])
             self.assertEqual(rc, 3); self.assertIn("::error", buf.getvalue()); self.assertIn("revoked", buf.getvalue())
             self.assertNotIn("KEY", buf.getvalue().replace("STEAM_API_KEY", ""))
+
+
+class Resilience(unittest.TestCase):
+    def test_transient_faults_are_retried_then_succeed(self):
+        import urllib.error
+        calls = {"n": 0}
+        class R:
+            def __enter__(self): return self
+            def __exit__(self, *a): pass
+            def read(self): return b'{"response": {"ok": 1}}'
+        def flaky(req, timeout=20):
+            calls["n"] += 1
+            if calls["n"] == 1: raise urllib.error.HTTPError("u", 503, "maintenance", {}, None)
+            if calls["n"] == 2: raise urllib.error.URLError("dns")
+            return R()
+        with mock.patch.object(ss.urllib.request, "urlopen", flaky), mock.patch.object(ss.time, "sleep", lambda s: None):
+            self.assertEqual(ss._get("X/", {}, "KEY"), {"response": {"ok": 1}})
+        self.assertEqual(calls["n"], 3)
+
+    def test_a_rejected_key_is_not_retried(self):
+        import urllib.error
+        calls = {"n": 0}
+        def refuse(req, timeout=20):
+            calls["n"] += 1; raise urllib.error.HTTPError("u", 403, "Forbidden", {}, None)
+        with mock.patch.object(ss.urllib.request, "urlopen", refuse), mock.patch.object(ss.time, "sleep", lambda s: None):
+            with self.assertRaises(urllib.error.HTTPError):
+                ss._get("X/", {}, "KEY")
+        self.assertEqual(calls["n"], 1)
+
+    def test_empty_library_is_a_failure_and_status_says_why(self):
+        def empty(path, params, key, timeout=20):
+            if "GetPlayerSummaries" in path: return {"response": {"players": [{"personaname": "x"}]}}
+            return {"response": {}}
+        with mock.patch.dict(os.environ, {"STEAM_API_KEY": "KEY", "STEAM_ID": SID}), mock.patch.object(ss, "_get", empty), tempfile.TemporaryDirectory() as d:
+            out, st = os.path.join(d, "steam.json"), os.path.join(d, "status.json")
+            with mock.patch("sys.stdout", io.StringIO()):
+                self.assertEqual(ss.main(["--plain", "--out", out, "--status", st]), 3)
+            self.assertFalse(os.path.exists(out))
+            self.assertEqual(json.load(open(st))["reason"], "empty-library")
+
+    def test_status_file_on_success_and_on_a_rejected_key(self):
+        import urllib.error
+        with mock.patch.dict(os.environ, {"STEAM_API_KEY": "KEY", "STEAM_ID": SID}), tempfile.TemporaryDirectory() as d:
+            st = os.path.join(d, "status.json")
+            with mock.patch.object(ss, "_get", fake_get), mock.patch("sys.stdout", io.StringIO()):
+                ss.main(["--plain", "--out", os.path.join(d, "a.json"), "--status", st])
+            self.assertEqual(json.load(open(st))["ok"], True)
+            def refuse(*a, **k): raise urllib.error.HTTPError("u", 403, "Forbidden", {}, None)
+            with mock.patch.object(ss, "_get", refuse), mock.patch("sys.stdout", io.StringIO()):
+                ss.main(["--plain", "--out", os.path.join(d, "b.json"), "--status", st])
+            j = json.load(open(st)); self.assertEqual((j["ok"], j["reason"]), (False, "key-rejected"))
+            self.assertNotIn("KEY", open(st).read())

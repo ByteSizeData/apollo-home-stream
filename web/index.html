@@ -312,7 +312,7 @@ footer .in{max-width:1180px; margin:0 auto; display:flex; gap:16px; flex-wrap:wr
   <div class="connect" id="connect" hidden>
     <h3>Connect this screen to your gaming PC</h3>
     <p>To stream, this screen needs the address the bridge prints when it starts on the PC. Use the <b>Tailscale</b> one — <b>http://gaming-station.tailXXXX.ts.net:8777</b> — and it works at home and away. Enter it once; it's remembered here.</p>
-    <div class="row"><input id="bridgeAddr" placeholder="http://gaming-station:8777" aria-label="Bridge address"><button type="button" class="btn primary" id="bridgeSave">Save</button><span class="ok" id="bridgeOk"></span></div>
+    <div class="row"><input id="bridgeAddr" placeholder="http://gaming-station.tailXXXX.ts.net:8777" aria-label="Bridge address"><button type="button" class="btn primary" id="bridgeSave">Save</button><span class="ok" id="bridgeOk"></span></div>
   </div>
 
   <div class="resume">
@@ -534,7 +534,13 @@ var DEMO=GAMES.slice();           // the invented library, used only when no bri
 var LIVE=false;                    // true once /api/games has answered (this page is served by the bridge)
 var SYNCED=false;                  // true when the public site has your Steam library baked in (steam.json)
 var BRIDGE=null;                   // saved bridge address on this screen (synced mode), e.g. http://gaming-station:8777
-try{ BRIDGE=localStorage.getItem("apollo.bridge")||null; }catch(e){}
+var BRIDGE_SRC=null;               // "manual" = typed on this screen after the synced address existed; anything else yields to the synced one
+try{ BRIDGE=localStorage.getItem("apollo.bridge")||null; BRIDGE_SRC=localStorage.getItem("apollo.bridge.src")||null; }catch(e){}
+function bridgeRemember(url,src){ BRIDGE=url; BRIDGE_SRC=src; try{ localStorage.setItem("apollo.bridge",url); localStorage.setItem("apollo.bridge.src",src); }catch(e){} }
+function homeOnly(url){                 // addresses that stop working the moment you leave the house
+  var h=(url||"").replace(/^https?:\/\//i,"").replace(/[:\/].*$/,"").toLowerCase();
+  return !!h && (h.indexOf(".")<0 || /\.local$/.test(h) || /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(h));
+}
 function bridgeNormalize(v){ v=(v||"").trim(); if(!v) return ""; if(!/^https?:\/\//i.test(v)) v="http://"+v; if(!/:\d+(\/|$)/.test(v)) v=v.replace(/\/?$/,"")+":8777"; return v.replace(/\/+$/,""); }
 function game(id){ return GAMES.filter(function(g){return String(g.id)===String(id)})[0]||GAMES[0] }
 function ago(ts){
@@ -578,7 +584,18 @@ function loadLive(){
 
 /* ---------- synced mode: the public site with your Steam library baked in ---------- */
 var SYNC=null;
+var SYNC_FAULT="";
+function loadSyncStatus(){
+  return fetch("sync-status.json",{cache:"no-store"}).then(function(r){return r.ok?r.json():null}).catch(function(){return null}).then(function(st){
+    if(!st||st.ok) return;
+    SYNC_FAULT = st.reason==="key-rejected" ? "Steam rejected the key - update the STEAM_API_KEY secret in GitHub, then run the publish site workflow."
+               : st.reason==="empty-library" ? "Steam returned an empty library on the last sync - showing the last good one."
+               : "Steam didn't answer the last sync - showing the last good library. It retries on its own.";
+    var u=$("#unlockSub"); if(u) u.textContent=SYNC_FAULT;
+  });
+}
 function loadSynced(){
+  loadSyncStatus();
   fetch("steam.json",{cache:"no-store"}).then(function(r){ return r.ok?r.json():null; }).catch(function(){return null}).then(function(blob){
     if(!blob||!blob.data){ $("#demoBanner").hidden=false; $("#hostText").textContent="Demo · not connected to a PC"; $("#hostLamp").className="lamp off"; return; }
     SYNC=blob;
@@ -614,7 +631,7 @@ function syncAge(ts){
 }
 function showSynced(d){
   SYNCED=true; $("#unlock").hidden=true; $("#demoBanner").hidden=true;
-  if(d.bridge && !BRIDGE){ BRIDGE=bridgeNormalize(d.bridge); }                 // the PC's address rides inside the encrypted data: nothing to type
+  if(d.bridge && BRIDGE_SRC!=="manual"){ bridgeRemember(bridgeNormalize(d.bridge),"synced"); }   // the PC's address rides inside the encrypted data: nothing to type, and it replaces an old home-only one
   GAMES=d.games.slice(0,60).map(function(g){ var h=(g.appid*2654435761)>>>0; return {id:String(g.appid), appid:g.appid, title:g.title, studio:"Steam", h1:h%360, h2:(h>>8)%360, pat:g.appid%4,
     hours:g.minutes?Math.round(g.minutes/6)/10:0, hours2w:g.minutes_2w?Math.round(g.minutes_2w/6)/10:0, last:g.last_played, cover:g.cover}; });
   if(!GAMES.length){ GAMES=DEMO; }
@@ -626,7 +643,7 @@ function showSynced(d){
   $("#connect").hidden=!!BRIDGE; if(BRIDGE) $("#bridgeAddr").value=BRIDGE;
   var lk=$("#lockBtn"); lk.hidden=false; lk.textContent="Lock this screen"; lk.onclick=function(){ try{ localStorage.removeItem("apollo.sync.key"); }catch(e){} location.reload(); };
   var c=$("#conn"); c.hidden=false; c.innerHTML='<span class="eyebrow">Steam</span><span class="c"><i class="'+age.level+'"></i>'+d.totals.games+' games · '+d.totals.hours+' h total · '+d.totals.hours_2w+' h in the last two weeks'+
-    (age.level==="fail"?' · <b style="color:var(--crit)">last synced '+age.text+' - the sync has stopped (check the Steam key in GitHub)</b>':age.level==="warn"?' · synced '+age.text:'')+'</span>'+
+    (SYNC_FAULT?' · <b style="color:var(--warn)">'+SYNC_FAULT.replace(/</g,"&lt;")+'</b>':age.level==="fail"?' · <b style="color:var(--crit)">last synced '+age.text+' - the sync has stopped</b>':age.level==="warn"?' · synced '+age.text:'')+'</span>'+
     '<span class="c" id="bridgeState" style="margin-left:auto">'+bridgeStrip()+'</span>';
   wireBridgeChange();
 }
@@ -933,8 +950,9 @@ $("#tabPlay").addEventListener("click",function(){ setTab("play") });
   $("#unlockForm").addEventListener("submit",function(e){ e.preventDefault(); submit(); });
   $("#bridgeSave").addEventListener("click",function(){
     var v=bridgeNormalize($("#bridgeAddr").value); if(!v){ $("#bridgeOk").textContent="Enter an address like http://gaming-station:8777"; return; }
-    BRIDGE=v; try{ localStorage.setItem("apollo.bridge",v); }catch(e){}
-    $("#bridgeOk").textContent="Saved"; $("#connect").hidden=true;
+    bridgeRemember(v,"manual");
+    if(homeOnly(v)){ $("#bridgeOk").style.color="var(--warn)"; $("#bridgeOk").textContent="Saved - but this address only works at home. For travel, use the PC's Tailscale name (it ends in .ts.net)."; }
+    else { $("#bridgeOk").style.color=""; $("#bridgeOk").textContent="Saved"; $("#connect").hidden=true; }
     var st=$("#bridgeState"); if(st){ st.innerHTML=bridgeStrip(); wireBridgeChange(); }
   });
   $("#bridgeAddr").addEventListener("keydown",function(e){ if(e.key==="Enter"){ e.preventDefault(); $("#bridgeSave").click(); } });

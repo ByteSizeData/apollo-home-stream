@@ -23,6 +23,7 @@ import os
 import re
 import sys
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -32,11 +33,27 @@ PBKDF2_ITERATIONS = 310000
 DEFAULT_PASSPHRASE = "2550"
 
 
+RETRY_WAITS = (5, 15, 45)          # Steam has a maintenance window most Tuesdays; a blip shouldn't cost a sync
+
+
 def _get(path, params, key, timeout=20):
     q = dict(params, key=key, format="json")
     req = urllib.request.Request(API + path + "?" + urllib.parse.urlencode(q), headers={"User-Agent": "apollo-home-stream-sync"})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return json.loads(r.read())
+    last = None
+    for wait in RETRY_WAITS + (None,):
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                return json.loads(r.read())
+        except urllib.error.HTTPError as e:
+            last = e
+            if e.code not in (429, 500, 502, 503, 504) or wait is None:
+                raise
+        except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
+            last = e
+            if wait is None:
+                raise
+        time.sleep(wait)
+    raise last
 
 
 def resolve_steamid(key, ident):
@@ -110,10 +127,23 @@ def decrypt(blob, passphrase):
     return json.loads(AESGCM(dk).decrypt(base64.b64decode(blob["iv"]), base64.b64decode(blob["data"]), None))
 
 
+def write_status(path, ok, reason):
+    """Cleartext, nothing personal: lets the page say WHY the library is old before anyone types a PIN."""
+    if not path:
+        return
+    try:
+        os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump({"checked": int(time.time()), "ok": bool(ok), "reason": reason}, f)
+    except OSError:
+        pass
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--out", default="web/steam.json")
     ap.add_argument("--plain", action="store_true", help="write unencrypted JSON (for a look; never publish this)")
+    ap.add_argument("--status", default="", help="also write a small cleartext status file the page can read before unlocking")
     args = ap.parse_args(argv)
     key = os.environ.get("STEAM_API_KEY", "").strip()
     ident = os.environ.get("STEAM_ID", "").strip()
@@ -127,8 +157,14 @@ def main(argv=None):
     except SystemExit:
         raise
     except Exception as e:  # noqa: BLE001 - the site still deploys; but say so loudly (exit 3 -> the workflow's alert job)
-        hint = " - has the Steam key been revoked? Update the STEAM_API_KEY secret." if "403" in str(e) or "401" in str(e) else ""
+        rejected = "403" in str(e) or "401" in str(e)
+        hint = " - has the Steam key been revoked? Update the STEAM_API_KEY secret." if rejected else ""
         print("::error title=Steam sync failed::%s: %s%s" % (type(e).__name__, str(e)[:120], hint))
+        write_status(args.status, False, "key-rejected" if rejected else "steam-unreachable")
+        return 3
+    if not data["games"]:
+        print("::error title=Steam sync failed::Steam returned an empty library - not publishing that over the last good one.")
+        write_status(args.status, False, "empty-library")
         return 3
     bridge = clean_bridge_url(os.environ.get("BRIDGE_URL", ""))
     if bridge:
@@ -137,6 +173,7 @@ def main(argv=None):
     os.makedirs(os.path.dirname(os.path.abspath(args.out)), exist_ok=True)
     with open(args.out, "w", encoding="utf-8") as f:
         json.dump(out, f, separators=(",", ":"))
+    write_status(args.status, True, "ok")
     print("synced %s: %d games, %.1f h total, %.1f h last two weeks -> %s%s" % (
         data["persona"] or steamid, data["totals"]["games"], data["totals"]["hours"], data["totals"]["hours_2w"], args.out,
         "" if args.plain else " (encrypted; unlock with your %s)" % ("PIN" if passphrase == DEFAULT_PASSPHRASE else "passphrase")))
