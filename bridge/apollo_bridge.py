@@ -499,16 +499,35 @@ def make_handler(bridge):
             self.wfile.write(body)
 
         def _read_json(self):
+            """The request body as JSON (None if absent, oversized or not JSON). Read once, remembered, and ALWAYS
+            consumed: answering - even with a 401 - while the body sits unread makes Windows reset the connection,
+            and the page then sees "host didn't answer" instead of being sent to the PIN screen."""
+            if hasattr(self, "_body"):
+                return self._body
+            self._body = None
             try:
                 n = int(self.headers.get("Content-Length", 0))
             except ValueError:
                 return None
-            if n < 0 or n > 4096:
+            if n < 0:
+                return None
+            if n > 4096:                                     # refuse it - after draining what is really there, without waiting for what isn't
+                try:
+                    self.connection.settimeout(0.25)
+                    self.rfile.read(min(n, 65536))
+                except Exception:  # noqa: BLE001 - a lying Content-Length must not hold the answer up
+                    pass
+                finally:
+                    try:
+                        self.connection.settimeout(self.timeout)
+                    except OSError:
+                        pass
                 return None
             try:
-                return json.loads(self.rfile.read(n) or b"{}")
+                self._body = json.loads(self.rfile.read(n) or b"{}")
             except (ValueError, json.JSONDecodeError):
-                return None
+                self._body = None
+            return self._body
 
         def do_GET(self):
             path = urlparse(self.path).path
@@ -560,6 +579,7 @@ def make_handler(bridge):
 
         def do_POST(self):
             path = urlparse(self.path).path
+            self._read_json()                                # consume the body before ANY answer (see _read_json)
 
             if path == "/api/pin":
                 if not bridge.gated:

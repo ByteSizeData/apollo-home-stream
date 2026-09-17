@@ -153,6 +153,26 @@ class HttpGate(unittest.TestCase):
         self.assertEqual(self.req("POST", "/api/launch", {"appid": 413150})[0], 401)
         self.assertEqual(self.req("GET", "/pin")[0], 200)     # the one page you're allowed to see
 
+    def test_a_refused_post_still_reads_its_body(self):
+        """Answering 401 with the body unread makes Windows reset the connection: the page would show 'host didn't
+        answer' instead of going to the PIN screen. Watch the raw socket: a clean 401, then a clean close."""
+        import socket
+        body = json.dumps({"appid": 413150, "pad": "x" * 3000}).encode()
+        for path in ("/api/launch", "/api/awake", "/api/nope"):
+            s = socket.create_connection(("127.0.0.1", self.port), timeout=5)
+            try:
+                s.sendall(("POST %s HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\nContent-Length: %d\r\n\r\n" % (path, len(body))).encode() + body)
+                data = b""
+                while True:
+                    chunk = s.recv(4096)                     # a reset here raises ConnectionResetError / ConnectionAbortedError
+                    if not chunk:
+                        break
+                    data += chunk
+            finally:
+                s.close()
+            self.assertTrue(data.startswith(b"HTTP/1.0 401") or data.startswith(b"HTTP/1.1 401"), (path, data[:40]))
+            self.assertIn(b"pin required", data)
+
     def test_bad_cookie_values_are_rejected(self):
         self.assertEqual(self.req("GET", "/api/games", cookie="nope")[0], 401)
         st, _, _ = self.req("GET", "/api/games", headers={"Cookie": "garbage;;=;apollo_session"})
