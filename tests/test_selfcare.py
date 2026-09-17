@@ -140,6 +140,34 @@ class UpdateStatus(unittest.TestCase):
             self.assertTrue(selfcare.update_status()["available"])
 
 
+class GitFolderGuard(unittest.TestCase):
+    """A folder that IS a git clone must never be zip-updated, and a git that refuses it must be explained, not looped on."""
+
+    def test_dubious_ownership_is_named_and_stops_the_update(self):
+        refused = mock.Mock(returncode=128, stdout="", stderr="fatal: detected dubious ownership in repository at 'C:/Users/a/AppData/Local/ApolloHomeStream'")
+        with mock.patch.object(selfcare, "has_git_folder", return_value=True), mock.patch.object(selfcare, "git_exe", return_value="git"), \
+             mock.patch.object(selfcare, "_git", return_value=refused), mock.patch.object(selfcare, "_zip_update") as zipped, \
+             mock.patch.object(selfcare, "remote_sha", return_value=SHA_B):
+            self.assertIn("administrator window", selfcare.git_problem())
+            u = selfcare.update_status()
+            self.assertIsNone(u["available"]); self.assertIn("ownership", u["error"])      # never "update available" forever
+            ok, msg, _, _ = selfcare.apply_update(log=lambda *a: None)
+            self.assertFalse(ok); self.assertIn("not updating", msg)
+            zipped.assert_not_called()
+
+    def test_a_clone_without_git_is_never_zip_updated(self):
+        with mock.patch.object(selfcare, "has_git_folder", return_value=True), mock.patch.object(selfcare, "git_exe", return_value=None), \
+             mock.patch.object(selfcare, "_zip_update") as zipped:
+            self.assertIn("git isn't installed", selfcare.git_problem())
+            self.assertIsNone(selfcare.local_sha())
+            self.assertFalse(selfcare.apply_update(log=lambda *a: None)[0])
+            zipped.assert_not_called()
+
+    def test_a_plain_download_has_no_git_problem(self):
+        with mock.patch.object(selfcare, "has_git_folder", return_value=False):
+            self.assertIsNone(selfcare.git_problem())
+
+
 class GitUpdate(unittest.TestCase):
     """The git path, with git itself faked: it must fetch the PINNED repo, and roll back on failing tests."""
 
@@ -158,7 +186,7 @@ class GitUpdate(unittest.TestCase):
             if args[0] == "merge":
                 return mock.Mock(returncode=merge_rc, stdout="", stderr="not ff" if merge_rc else "")
             return mock.Mock(returncode=0, stdout="", stderr="")
-        with mock.patch.object(selfcare, "is_git_checkout", return_value=True), mock.patch.object(selfcare, "_git", fake_git), \
+        with mock.patch.object(selfcare, "is_git_checkout", return_value=True), mock.patch.object(selfcare, "git_problem", return_value=None), mock.patch.object(selfcare, "_git", fake_git), \
              mock.patch.object(selfcare, "run_unit_tests", return_value={"name": "unit tests", "status": "ok" if tests_ok else "fail", "detail": "Ran 1 test - OK" if tests_ok else "FAILED"}):
             return selfcare.apply_update(log=lambda *a: None)
 
@@ -186,7 +214,7 @@ class GitUpdate(unittest.TestCase):
 
     def test_git_timeouts_do_not_raise(self):
         def hang(*a, **k): raise subprocess.TimeoutExpired("git", 1)
-        with mock.patch.object(selfcare, "is_git_checkout", return_value=True), mock.patch.object(selfcare, "local_sha", return_value=SHA_A), mock.patch.object(selfcare, "_git", hang):
+        with mock.patch.object(selfcare, "is_git_checkout", return_value=True), mock.patch.object(selfcare, "git_problem", return_value=None), mock.patch.object(selfcare, "local_sha", return_value=SHA_A), mock.patch.object(selfcare, "_git", hang):
             ok, msg, before, after = selfcare.apply_update(log=lambda *a: None)
         self.assertFalse(ok); self.assertIn("timed out", msg); self.assertEqual(before, after)
 
@@ -320,7 +348,7 @@ class SecondPassFixes(unittest.TestCase):
             if a == "merge": return mock.Mock(returncode=merge_rc, stdout="", stderr="fatal: Not possible to fast-forward, aborting." if merge_rc else "")
             if a == "rev-list": return mock.Mock(returncode=0, stdout=ahead + "\n", stderr="")
             return mock.Mock(returncode=0, stdout="", stderr="")
-        return [mock.patch.object(selfcare, "is_git_checkout", return_value=True), mock.patch.object(selfcare, "_git", fake_git),
+        return [mock.patch.object(selfcare, "is_git_checkout", return_value=True), mock.patch.object(selfcare, "git_problem", return_value=None), mock.patch.object(selfcare, "_git", fake_git),
                 mock.patch.object(selfcare, "run_unit_tests", return_value={"name": "unit tests", "status": "ok" if tests_ok else "fail", "detail": "Ran 1 test - OK" if tests_ok else "FAILED"})]
 
     def run_with(self, patches):

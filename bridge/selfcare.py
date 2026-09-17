@@ -261,12 +261,49 @@ def print_report(h):
 
 
 # ----------------------------------------------------------------------------- update
+def git_exe():
+    """git on PATH, or where Git for Windows puts it - a task started before the next sign-in may not see the new PATH yet."""
+    found = shutil.which("git")
+    if found:
+        return found
+    for guess in (r"C:\Program Files\Git\cmd\git.exe", r"C:\Program Files (x86)\Git\cmd\git.exe"):
+        if os.name == "nt" and os.path.exists(guess):
+            return guess
+    return None
+
+
 def _git(*args, timeout=120):
-    return subprocess.run(["git", "-C", ROOT] + list(args), capture_output=True, text=True, timeout=timeout, **NO_WINDOW)
+    # safe.directory: this is the bridge's own folder. If its Windows owner ever differs from the account running the
+    # bridge (installed from an administrator window, restored from a backup) git would refuse it and updates would stop.
+    return subprocess.run([git_exe() or "git", "-c", "safe.directory=" + ROOT.replace("\\", "/"), "-C", ROOT] + list(args),
+                          capture_output=True, text=True, timeout=timeout, **NO_WINDOW)
+
+
+def has_git_folder():
+    return os.path.isdir(os.path.join(ROOT, ".git"))
 
 
 def is_git_checkout():
-    return os.path.isdir(os.path.join(ROOT, ".git")) and shutil.which("git") is not None
+    return has_git_folder() and git_exe() is not None
+
+
+def git_problem():
+    """Why git can't be used on a folder that IS a git clone (None when fine). Such a folder must never be
+    zip-updated: that would leave modified tracked files, and every later git update would refuse."""
+    if not has_git_folder():
+        return None
+    if not git_exe():
+        return "this copy is a git clone but git isn't installed (or not on PATH yet) - run the one-line installer again"
+    try:
+        r = _git("rev-parse", "HEAD", timeout=10)
+    except Exception as e:  # noqa: BLE001
+        return "git didn't answer (%s)" % type(e).__name__
+    if r.returncode != 0:
+        why = (r.stderr or r.stdout or "").strip().splitlines()
+        if any("dubious ownership" in l for l in why):
+            return "git refuses this folder because it belongs to another Windows account (it was installed from an administrator window) - run the one-line installer again to fix the ownership"
+        return "git can't read this folder: %s" % (why[0] if why else "unknown error")
+    return None
 
 
 def local_sha():
@@ -275,6 +312,8 @@ def local_sha():
             return _git("rev-parse", "HEAD", timeout=10).stdout.strip() or None
         except Exception:  # noqa: BLE001
             return None
+    if has_git_folder():
+        return None
     try:
         with open(SHA_FILE) as f:
             return f.read().strip() or None
@@ -289,6 +328,9 @@ def remote_sha(timeout=NET_TIMEOUT):
 
 def update_status(timeout=NET_TIMEOUT):
     """{'available': bool|None, 'local': sha, 'remote': sha, 'error': str|None} - never raises."""
+    broken = git_problem()
+    if broken:                                               # say so, instead of "update available" forever
+        return {"available": None, "local": None, "remote": None, "error": "couldn't check for updates: " + broken}
     loc = local_sha()
     try:
         rem = _bounded(lambda: remote_sha(timeout), timeout + 1, None, raise_errors=True)
@@ -453,6 +495,9 @@ def _zip_update(log):
 def apply_update(log=print):
     """Returns (ok, message, sha_before, sha_after). sha_after == sha_before means nothing changed."""
     try:
+        broken = git_problem()
+        if broken:
+            return False, "not updating: " + broken, None, None
         return _git_update(log) if is_git_checkout() else _zip_update(log)
     except Exception as e:  # noqa: BLE001
         return False, "update failed: %s" % e, local_sha(), local_sha()

@@ -25,10 +25,11 @@ IS_WIN = os.name == "nt"
 
 
 def _run(cmd, timeout=6):
-    """(exit_code, text). A missing program, a hang, a permission error: all come back as (None, "")."""
+    """(exit_code, stdout). A missing program, a hang, a permission error: all come back as (None, "").
+    stdout only: `tailscale netcheck --format=json` prints a warning on stderr that would break the JSON."""
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, errors="replace", **NO_WINDOW)
-        return r.returncode, (r.stdout or "") + (r.stderr or "")
+        return r.returncode, (r.stdout or "")
     except Exception:  # noqa: BLE001
         return None, ""
 
@@ -143,8 +144,9 @@ def awake_state():
     """What the page shows: the saved choice, whether the bridge is holding the PC awake, and Windows' own timer."""
     pol = sleep_policy()
     never = pol["standby"] == 0 and pol["hibernate"] in (0, None)
-    return {"mode": awake_mode(), "holding": HOLD.held, "never_sleeps": bool(never or HOLD.held),
-            "sleep_after_min": None if pol["standby"] is None else pol["standby"] // 60, "supported": HOLD.supported()}
+    timers = [t for t in (pol["standby"], pol["hibernate"]) if t]           # whichever fires first is when it drops off
+    return {"mode": awake_mode(), "holding": HOLD.held, "never_sleeps": bool(never or HOLD.held), "windows_never": bool(never),
+            "sleep_after_min": None if pol["standby"] is None else (min(timers) // 60 if timers else 0), "supported": HOLD.supported()}
 
 
 def set_awake(mode, apply_now=True):
@@ -163,16 +165,24 @@ def set_awake(mode, apply_now=True):
 
 
 def resume_awake():
-    """Called when the bridge starts: pick the saved choice back up."""
+    """Called when the bridge starts: pick the saved choice back up - including Windows' own timers, which a
+    vendor 'gaming mode' tool may have switched to another power plan since."""
     if awake_mode() == "awake":
         HOLD.set(True)
+        if IS_WIN:
+            pol = sleep_policy()
+            if pol["standby"] or pol["hibernate"]:
+                _run(["powercfg", "/change", "standby-timeout-ac", "0"])
+                _run(["powercfg", "/change", "hibernate-timeout-ac", "0"])
 
 
 def check_sleep():
     st = awake_state()
-    if st["never_sleeps"]:
-        how = "the bridge is holding it awake" if st["holding"] else "Windows is set to never sleep"
-        return _c("stays awake", True, how)
+    if st["windows_never"]:
+        return _c("stays awake", True, "Windows is set to never sleep" + (", and the bridge holds it awake too" if st["holding"] else ""))
+    if st["holding"]:                                        # the hold only exists while someone is signed in and the bridge runs
+        return _c("stays awake", False, "kept awake only while you're signed in - Windows' own timer is still %s min, so it would sleep at the sign-in screen after a restart"
+                  % st["sleep_after_min"], fail=False, fix="Press Keep it always awake again, or run the installer again.")
     if st["sleep_after_min"] is None:
         return _c("stays awake", False, "couldn't read this system's sleep setting", fail=False)
     return _c("stays awake", False, "this PC goes to sleep after %d min idle - and a sleeping PC can't be woken from outside your home" % st["sleep_after_min"],
@@ -293,8 +303,8 @@ def check_reboot_pending():
 def check_autologon():
     on = str(_reg("HKEY_LOCAL_MACHINE", r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon", "AutoAdminLogon") or "") == "1"
     if on:
-        return _c("after a power cut", True, "signs itself back in")
-    return _c("after a power cut", False, "waits at the Windows sign-in screen - you can still get in: open Moonlight/Artemis, choose Desktop, type your password", fail=False,
+        return _c("after a restart", True, "signs itself back in")
+    return _c("after a restart", False, "after a power cut (and on most PCs after a Windows update too) it waits at the sign-in screen - you can still get in: open Moonlight/Artemis, choose Desktop, type your password", fail=False,
               fix="Optional: run the installer with -AutoLogon. Also set the BIOS to power on when mains power returns.")
 
 
@@ -307,7 +317,14 @@ def check_task():
 
 
 def parse_sc_services(text):
-    return [m.group(1).strip() for m in re.finditer(r"SERVICE_NAME:\s*(.+)", text or "")]
+    """Service names from `sc query`: the first "label: value" line of each blank-line-separated block. The labels
+    are translated on non-English Windows (DIENSTNAME, NOM_SERVICE...); the layout and the value tokens are not."""
+    names = []
+    for block in re.split(r"\r?\n[ \t]*\r?\n", text or ""):
+        first = next((l for l in block.splitlines() if l.strip()), "")
+        if ":" in first:
+            names.append(first.split(":", 1)[1].strip())
+    return [n for n in names if n]
 
 
 def check_apollo_service():
@@ -317,8 +334,8 @@ def check_apollo_service():
         return _c("apollo service", False, "Apollo's Windows service wasn't found", fail=False, fix="Install Apollo from the Install tab.")
     _, qc = _run(["sc", "qc", names[0]])
     _, q = _run(["sc", "query", names[0]])
-    auto = bool(re.search(r"START_TYPE\s*:\s*2\b", qc))
-    running = bool(re.search(r"STATE\s*:\s*4\b", q))
+    auto = bool(re.search(r":\s*2\s+AUTO_START", qc))
+    running = bool(re.search(r":\s*4\s+RUNNING", q))
     if auto and running:
         return _c("apollo service", True, "running, starts with Windows")
     return _c("apollo service", False, "%s, %s" % ("running" if running else "NOT running", "starts with Windows" if auto else "does NOT start with Windows"),

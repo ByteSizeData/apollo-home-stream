@@ -53,8 +53,6 @@ $ErrorActionPreference = "Stop"
 $Repo      = "ByteSizeData/apollo-home-stream"
 $SiteUrl   = "https://bytesizedata.github.io/apollo-home-stream"
 $TaskName  = "Apollo Home Stream bridge"
-$FwBridge  = "Apollo Home Stream bridge (TCP $Port, home network + Tailscale)"
-$FwBridgeOld = "Apollo Home Stream bridge (TCP $Port, home network)"
 $FwTs      = "Tailscale direct connections (UDP 41641)"
 $FwFrom    = @("LocalSubnet", "100.64.0.0/10", "fd7a:115c:a1e0::/48")     # this network + your Tailscale devices, nobody else
 $TsAdmin   = "https://login.tailscale.com/admin/machines"
@@ -63,7 +61,18 @@ $BridgePy  = Join-Path $InstallDir "bridge\apollo_bridge.py"
 if (-not $RepoUrl) { $RepoUrl = "https://github.com/$Repo.git" }
 $script:Problems = @()      # things that did not work - the summary never says "All set" over these
 $script:Todo     = @()      # things only the owner can do
+$script:NotReady = $false   # the travel check found a FAIL the installer itself can't fix
 
+# Run again without options (the plain one-liner can't carry any): keep the PIN and port already chosen for this PC,
+# never fall back to the public defaults and sign every screen out.
+$existing = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+if ($existing -and $Stage -eq "All" -and -not $Uninstall) {
+  $oldArgs = "$($existing.Actions[0].Arguments)"
+  if (-not $PSBoundParameters.ContainsKey("Pin")  -and $oldArgs -match '--pin "([A-Za-z0-9_\-]*)"') { $Pin = $Matches[1] }
+  if (-not $PSBoundParameters.ContainsKey("Port") -and $oldArgs -match '--port (\d+)') { $Port = [int]$Matches[1] }
+}
+$FwBridge  = "Apollo Home Stream bridge (TCP $Port, home network + Tailscale)"
+$FwBridgeOld = "Apollo Home Stream bridge (TCP $Port, home network)"
 if ($Pin -notmatch '^[A-Za-z0-9_\-]{0,64}$') { throw "The PIN can only contain letters, digits, - and _ ." }
 if ($InstallDir -match '["`$]') { throw "The install folder can't contain quotes or dollar signs." }
 
@@ -81,11 +90,15 @@ function Do-It([string]$what, [scriptblock]$action) {
   try { & $action | Out-Null; return $true }
   catch { Problem "couldn't $what - $($_.Exception.Message)"; return $false }
 }
-function Native([scriptblock]$cmd) {
+function Native([scriptblock]$cmd, [switch]$StdoutOnly) {
   # Windows PowerShell 5.1 turns anything a program writes to stderr into a script-ending error under 'Stop'.
   # Run programs relaxed and hand back plain text; $LASTEXITCODE still says how it went.
+  # -StdoutOnly: for output that gets parsed (JSON) - a warning line on stderr must not corrupt it.
   $old = $ErrorActionPreference; $ErrorActionPreference = "Continue"; $out = @()
-  try { $out = @(& $cmd 2>&1 | ForEach-Object { "$_" }) } catch { $out = @("$_"); $global:LASTEXITCODE = 1 } finally { $ErrorActionPreference = $old }
+  try {
+    if ($StdoutOnly) { $out = @(& $cmd 2>$null | ForEach-Object { "$_" }) }
+    else { $out = @(& $cmd 2>&1 | ForEach-Object { "$_" }) }
+  } catch { $out = @("$_"); $global:LASTEXITCODE = 1 } finally { $ErrorActionPreference = $old }
   return $out
 }
 function Have($cmd) { return [bool](Get-Command $cmd -ErrorAction SilentlyContinue) }
@@ -158,7 +171,7 @@ function Find-Tailscale {
 function Tailscale-State {
   $ts = Find-Tailscale
   if (-not $ts) { return $null }
-  try { return ((Native { & $ts status --json }) -join "`n" | ConvertFrom-Json) } catch { return $null }
+  try { return ((Native { & $ts status --json } -StdoutOnly) -join "`n" | ConvertFrom-Json) } catch { return $null }
 }
 function Key-ExpiryDays($st) {
   try {
@@ -174,7 +187,7 @@ function Bridge-Answers([int]$seconds) {
   } while ((Get-Date) -lt $until)
   return $false
 }
-function Task-ArgLine { return "`"$BridgePy`" --auto-update --port $Port --pin `"$Pin`" --name `"$env:COMPUTERNAME`" --log `"$BridgeLog`"" }
+function Task-ArgLine { return "`"$BridgePy`" --auto-update --supervised --port $Port --pin `"$Pin`" --name `"$env:COMPUTERNAME`" --log `"$BridgeLog`"" }
 
 # ================================================================ the administrator part
 function Invoke-AdminStage {
@@ -263,7 +276,20 @@ function Invoke-AdminStage {
     if (-not $ts) { Problem "Tailscale isn't installed, so this PC can't be reached away from home yet." }
     else {
       $st = Tailscale-State
-      if (-not $st -or $st.BackendState -ne "Running") {
+      foreach ($i in 1..6) {                                 # just installed / just booted / mid self-update: give it a moment before deciding anything
+        if ($st -and $st.BackendState -and $st.BackendState -ne "Starting") { break }
+        Start-Sleep -Seconds 2; $st = Tailscale-State
+      }
+      if ($st -and $st.BackendState -eq "Stopped") {         # signed in but switched off: reconnect, never sign out
+        Say "   Tailscale is signed in but switched off - reconnecting"
+        Native { & $ts up } | Out-Null
+        $st = Tailscale-State
+      }
+      if (-not $st) {
+        Problem "Tailscale is installed but didn't answer. Open Tailscale from the Start menu, check it is signed in, then run this installer again."
+      } elseif ($st.BackendState -ne "Running" -and @("NeedsLogin", "NoState") -notcontains "$($st.BackendState)") {
+        Problem "Tailscale is in an unexpected state ($($st.BackendState)). Open Tailscale from the Start menu, then run this installer again."
+      } elseif ($st.BackendState -ne "Running") {
         Say "   Tailscale needs you to sign in - opening the sign-in page (use the SAME account on your phone and laptop)..." "Yellow"
         $upOut = Join-Path $env:TEMP "apollo-tailscale-up.txt"; $upErr = Join-Path $env:TEMP "apollo-tailscale-up.err.txt"
         $opened = $false; $until = (Get-Date).AddMinutes(5)
@@ -285,7 +311,7 @@ function Invoke-AdminStage {
         }
       }
       if ($st -and $st.BackendState -eq "Running") { Say "   Tailscale is connected as $($st.Self.DNSName.TrimEnd('.'))" "DarkGreen" }
-      else { Problem "Tailscale isn't signed in yet. Open Tailscale from the Start menu, sign in, then run this installer again." }
+      elseif ($st -and @("NeedsLogin", "NoState") -contains "$($st.BackendState)") { Problem "Tailscale isn't signed in yet. Open Tailscale from the Start menu, sign in, then run this installer again." }
       Native { & $ts set --unattended=true } | Out-Null
       if ($LASTEXITCODE -eq 0) { Say "   Tailscale stays connected even when nobody is signed in to Windows" "DarkGreen" }
       else { Problem "couldn't switch Tailscale to 'run unattended' - turn it on from the Tailscale tray icon > Preferences." }
@@ -334,9 +360,9 @@ function Invoke-AdminStage {
       else { Problem "automatic sign-in is still off - run Autologon from the Start menu and press Enable." }
     }
   } else {
-    Say "   Windows Update restarts sign you back in by themselves. A power cut does not: the PC waits at the" "DarkGray"
-    Say "   sign-in screen. You can still get in from the road - open Moonlight/Artemis, pick 'Desktop', and type" "DarkGray"
-    Say "   your Windows password there. To skip even that, run this installer again with -AutoLogon." "DarkGray"
+    Say "   After a power cut - and on most PCs after a Windows update too - the PC waits at the sign-in screen." "DarkGray"
+    Say "   You can still get in from the road: Tailscale and Apollo are already running, so open Moonlight/Artemis," "DarkGray"
+    Say "   pick 'Desktop', and type your Windows password there. To skip even that, run this again with -AutoLogon." "DarkGray"
   }
 }
 
@@ -372,6 +398,12 @@ function Invoke-UserStage {
     } | Out-Null
   }
   if (-not $DryRun -and -not (Test-Path $BridgePy)) { throw "The project didn't download into $InstallDir - check the internet connection and run this again." }
+  if (-not $DryRun -and (Is-Admin)) {
+    # Started from an administrator window: the files now belong to "Administrators", and git (run by the everyday,
+    # non-admin task) refuses such a folder as "dubious ownership" - self-update would silently never work.
+    Native { icacls "$InstallDir" /setowner "$ForUser" /T /C /Q } | Out-Null
+    if ($LASTEXITCODE -ne 0) { Problem "couldn't hand $InstallDir back to $ForUser - self-update may not work. Run this installer from a normal (non-administrator) PowerShell window." }
+  }
 
   if ($SteamKey) {
     Do-It "store your Steam Web API key on this PC (never shown again)" {
@@ -379,14 +411,23 @@ function Invoke-UserStage {
     } | Out-Null
   }
 
-  if (-not $KeepSleep) {
+  $cfgFile = Join-Path $env:USERPROFILE ".apollo-home-stream\config.json"
+  $awakeChosen = (Test-Path $cfgFile) -and ((Get-Content $cfgFile -Raw -ErrorAction SilentlyContinue) -match '"awake"')
+  if ($awakeChosen) { Say "   keeping the sleep choice already made on the Sleep & wake tab" "DarkGreen" }
+  if (-not $KeepSleep -and -not $awakeChosen) {
     Do-It "tell the bridge to keep this PC awake whenever it runs (change it any time on the Sleep & wake tab)" {
       $o = Native { & $python $BridgePy --set-awake on }; if ($LASTEXITCODE -ne 0) { throw ($o | Select-Object -Last 1) }
     } | Out-Null
   }
 
   $runKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
-  $steamExe = @("${env:ProgramFiles(x86)}\Steam\steam.exe", "$env:ProgramFiles\Steam\steam.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1
+  $steamDirs = @()
+  foreach ($k in @(@("HKCU:\Software\Valve\Steam", "SteamPath"), @("HKLM:\SOFTWARE\WOW6432Node\Valve\Steam", "InstallPath"), @("HKLM:\SOFTWARE\Valve\Steam", "InstallPath"))) {
+    $v = (Get-ItemProperty -Path $k[0] -Name $k[1] -ErrorAction SilentlyContinue).($k[1])     # gaming PCs often keep Steam on D: or E:
+    if ($v) { $steamDirs += ($v -replace "/", "\") }
+  }
+  $steamDirs += @("${env:ProgramFiles(x86)}\Steam", "$env:ProgramFiles\Steam")
+  $steamExe = $steamDirs | ForEach-Object { Join-Path $_ "steam.exe" } | Where-Object { Test-Path $_ } | Select-Object -First 1
   if (-not $steamExe) {
     Say "   Steam isn't installed in the usual place - install it, sign in with 'Remember me', then run this again." "Yellow"
     Todo "Install Steam and sign in with 'Remember me' ticked, then run this installer once more."
@@ -402,7 +443,12 @@ function Invoke-UserStage {
     return
   }
   try { Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue; Start-ScheduledTask -TaskName $TaskName -ErrorAction Stop } catch { Say "   (the task will start by itself within a minute)" "DarkGray" }
-  $up = Bridge-Answers 45
+  $up = Bridge-Answers 30
+  if (-not $up) {                                           # give the every-minute watchdog a full turn (and a first-run update) before doing anything else
+    $state = "$((Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue).State)"
+    Say "   still starting (task: $state) - waiting up to two more minutes..." "DarkGray"
+    $up = Bridge-Answers 120
+  }
   if (-not $up) {
     # No desktop session for the task (or Windows hasn't fired it yet): start it directly so it works right now;
     # the task takes over from the next sign-in.
@@ -418,6 +464,7 @@ function Invoke-UserStage {
   Say ""
   Say "   Ready to travel?" "White"
   Native { & $python $BridgePy --preflight --port $Port } | ForEach-Object { Say "   $_" "DarkGray" }
+  $script:NotReady = ($LASTEXITCODE -ne 0)
 }
 
 # ================================================================ -Status (read-only)
@@ -501,6 +548,8 @@ if ($fatal) {
 } elseif ($script:Problems.Count) {
   Say "Setup finished, but $($script:Problems.Count) thing(s) need attention:" "Yellow"
   $script:Problems | ForEach-Object { Say "  - $_" "Yellow" }
+} elseif ($script:NotReady) {
+  Say "Installed and running - but NOT ready to travel yet: fix the FAIL line(s) in the 'Ready to travel?' list above, then run this again." "Yellow"
 } else {
   Say "All set." "Green"
 }

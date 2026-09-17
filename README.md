@@ -44,7 +44,8 @@ Say Yes when Windows asks for permission (once). It:
 - finishes with the two addresses to use, a **Ready to travel?** report, and the short list of things
   only you can do (BIOS power-on after a power cut, disabling Tailscale key expiry, Steam "Remember me").
 
-It is safe to run again at any time — it only fixes what isn't right. Options go after the script:
+It is safe to run again at any time — it only fixes what isn't right, and it keeps the PIN, port and
+sleep choice you already made. Options go after the script:
 
 ```powershell
 & ([scriptblock]::Create((irm https://bytesizedata.github.io/apollo-home-stream/install.ps1))) -SteamKey YOURKEY
@@ -206,10 +207,10 @@ password after a restart, the startup task is missing. Yellow rows are worth a l
 is waiting (do it now, not next week), a router that forces slow relayed connections, your phone's
 Tailscale sign-in running out, no automatic sign-in after a power cut. Every row says how to fix it.
 
-**If the PC restarts while you're away.** After a Windows update it signs itself back in and the
-bridge returns within a minute. After a power cut (with the BIOS set to power on when mains returns) it
-waits at the sign-in screen - Tailscale and Apollo are already up, so open Moonlight/Artemis, choose
-**Desktop**, and type your Windows password there. `-AutoLogon` on the installer removes even that step.
+**If the PC restarts while you're away.** After a power cut (with the BIOS set to power on when mains
+returns) - and on most PCs after a Windows update too - it waits at the sign-in screen. Tailscale and
+Apollo are already up, so open Moonlight/Artemis, choose **Desktop**, and type your Windows password
+there; the bridge returns within a minute. `-AutoLogon` on the installer removes even that step.
 
 **Self-update.** The bridge checks GitHub at startup and prints a one-liner if there's a
 newer version. `--update` applies it: a git checkout gets `git pull`, a plain download gets

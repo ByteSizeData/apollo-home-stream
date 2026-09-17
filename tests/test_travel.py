@@ -58,11 +58,29 @@ class Powercfg(unittest.TestCase):
             self.assertIn("30 min", row["detail"])
             self.assertIn("fix", row)
             with mock.patch.object(travel.HOLD, "_held", True):
-                self.assertEqual(travel.check_sleep()["status"], "ok")
+                held = travel.check_sleep()                                    # the hold dies with the sign-in: worth a warning, not a green light
+                self.assertEqual(held["status"], "warn"); self.assertIn("30 min", held["detail"])
         with mock.patch.object(travel, "sleep_policy", return_value={"standby": 0, "hibernate": 0}):
             self.assertEqual(travel.check_sleep()["status"], "ok")
         with mock.patch.object(travel, "sleep_policy", return_value={"standby": 0, "hibernate": 3600}):
-            self.assertEqual(travel.check_sleep()["status"], "fail")           # hibernating is just as unreachable
+            row = travel.check_sleep()
+            self.assertEqual(row["status"], "fail")                            # hibernating is just as unreachable
+            self.assertIn("60 min", row["detail"])                             # ...and never reported as "after 0 min"
+        with mock.patch.object(travel, "sleep_policy", return_value={"standby": 7200, "hibernate": 1800}):
+            self.assertEqual(travel.awake_state()["sleep_after_min"], 30)      # whichever timer fires first
+
+    def test_only_stdout_is_parsed(self):
+        code, text = travel._run([sys.executable, "-c", "import sys; print('{\"UDP\": true}'); print('# Warning: not a stable interface', file=sys.stderr)"])
+        self.assertEqual((code, json.loads(text)), (0, {"UDP": True}))         # tailscale netcheck warns on stderr; that must not break the JSON
+        self.assertEqual(travel._run(["definitely-not-a-program-xyz"]), (None, ""))
+
+    def test_resume_puts_windows_timers_back(self):
+        calls = []
+        with mock.patch.object(travel, "awake_mode", return_value="awake"), mock.patch.object(travel.HOLD, "set"), \
+             mock.patch.object(travel, "IS_WIN", True), mock.patch.object(travel, "sleep_policy", return_value={"standby": 1800, "hibernate": 0}), \
+             mock.patch.object(travel, "_run", side_effect=lambda cmd, timeout=6: calls.append(cmd) or (0, "")):
+            travel.resume_awake()
+        self.assertEqual([c[2:] for c in calls], [["standby-timeout-ac", "0"], ["hibernate-timeout-ac", "0"]])
         with mock.patch.object(travel, "sleep_policy", return_value={"standby": None, "hibernate": None}):
             self.assertEqual(travel.check_sleep()["status"], "warn")
 
@@ -142,10 +160,34 @@ class SteamSignIn(unittest.TestCase):
         self.assertEqual(travel.check_steam_login(None)["status"], "warn")
         self.assertEqual(travel.check_steam_login(yes)["status"], "ok")
 
+    SC = ("\r\nSERVICE_NAME: ApolloService\r\nDISPLAY_NAME: Apollo Service\r\n        TYPE               : 10  WIN32_OWN_PROCESS\r\n"
+          "        STATE              : 4  RUNNING\r\n                                (STOPPABLE, NOT_PAUSABLE)\r\n\r\n"
+          "SERVICE_NAME: Tailscale\r\nDISPLAY_NAME: Tailscale\r\n        STATE              : 4  RUNNING\r\n")
+
     def test_sc_service_names(self):
-        text = "SERVICE_NAME: ApolloService\r\nDISPLAY_NAME: Apollo Service\r\n\r\nSERVICE_NAME: Tailscale\r\n"
-        self.assertEqual(travel.parse_sc_services(text), ["ApolloService", "Tailscale"])
+        self.assertEqual(travel.parse_sc_services(self.SC), ["ApolloService", "Tailscale"])
+        german = self.SC.replace("SERVICE_NAME", "DIENSTNAME").replace("DISPLAY_NAME", "ANZEIGENAME").replace("STATE ", "STATUS")
+        self.assertEqual(travel.parse_sc_services(german), ["ApolloService", "Tailscale"])        # labels are translated, the layout is not
         self.assertEqual(travel.parse_sc_services(None), [])
+
+    def test_apollo_service_row_in_any_language(self):
+        def fake(cmd, timeout=6):
+            if cmd[1] == "qc":
+                return 0, "DIENSTNAME: ApolloService\r\n        STARTTYP           : 2   AUTO_START\r\n"
+            if len(cmd) == 3:
+                return 0, "DIENSTNAME: ApolloService\r\n        STATUS             : 4  RUNNING\r\n"
+            return 0, self.SC.replace("SERVICE_NAME", "DIENSTNAME")
+        with mock.patch.object(travel, "_run", side_effect=fake):
+            self.assertEqual(travel.check_apollo_service()["status"], "ok")
+        def stopped(cmd, timeout=6):
+            if cmd[1] == "qc":
+                return 0, "SERVICE_NAME: ApolloService\r\n        START_TYPE         : 3   DEMAND_START\r\n"
+            if len(cmd) == 3:
+                return 0, "SERVICE_NAME: ApolloService\r\n        STATE              : 1  STOPPED\r\n"
+            return 0, self.SC
+        with mock.patch.object(travel, "_run", side_effect=stopped):
+            row = travel.check_apollo_service()
+            self.assertEqual(row["status"], "fail"); self.assertIn("NOT running", row["detail"])
 
 
 class Verdict(unittest.TestCase):
@@ -292,6 +334,13 @@ class RunningUpdate(unittest.TestCase):
             self.assertIsNone(ab.auto_update_once(self.b))
             ap.assert_not_called()
 
+    def test_under_the_startup_task_a_restart_is_just_an_exit(self):
+        with mock.patch.object(ab.subprocess, "call") as spawn, mock.patch.object(ab.os, "execve") as execve:
+            with self.assertRaises(SystemExit) as e:
+                ab.restart("c" * 40, supervised=True)                  # the every-minute watchdog starts the new code; no parked parent
+            self.assertEqual(e.exception.code, 0)
+            spawn.assert_not_called(); execve.assert_not_called()
+
     def test_the_loop_stops_the_server_and_names_the_commit(self):
         class Srv:
             stopped = False
@@ -349,6 +398,23 @@ class Http(unittest.TestCase):
             self.bridge._awake = None
             st, host = self.req("GET", "/api/host", cookie=self.cookie())
             self.assertEqual((st, host["awake"], host["awake_state"]["mode"]), (200, True, "awake"))
+
+    def test_check_again_cannot_be_hammered(self):
+        tok = self.cookie()
+        with mock.patch.object(travel, "preflight", return_value={"ready": True, "status": "ok", "headline": "Ready to travel", "checks": [], "awake": {}, "checked_at": 1}) as pf:
+            self.bridge._preflight = None
+            for _ in range(4):
+                self.assertEqual(self.req("GET", "/api/preflight?fresh=1", cookie=tok)[0], 200)
+            self.assertEqual(pf.call_count, 1)                             # one real run per few seconds, however often the button is pressed
+
+    def test_version_says_whether_this_bridge_updates_itself(self):
+        tok = self.cookie()
+        self.assertIs(self.req("GET", "/api/version", cookie=tok)[1]["auto"], False)
+        self.bridge.auto_update = True
+        try:
+            self.assertIs(self.req("GET", "/api/version", cookie=tok)[1]["auto"], True)
+        finally:
+            self.bridge.auto_update = False
 
     def test_the_switch(self):
         tok = self.cookie()

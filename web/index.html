@@ -304,7 +304,7 @@ footer .in{max-width:1180px; margin:0 auto; display:flex; gap:16px; flex-wrap:wr
         <span>Your Steam name appears in the top-right corner and this page fills with your real games.</span></li>
     </ol>
     <p style="margin:14px 0 0">Want it synced with Steam itself — what you played last on any device, current stats, games you own but haven't installed?
-    Add your key to the same line: <code class="k">… -SteamKey YOURKEY</code> (key from steamcommunity.com/dev/apikey). Details on the <b>Install</b> tab.</p>
+    The <b>Install</b> tab has a second line that takes options — end it with <code class="k">-SteamKey YOURKEY</code> (key from steamcommunity.com/dev/apikey).</p>
   </div>
 
   <div class="unlock" id="unlock" hidden>
@@ -370,7 +370,9 @@ footer .in{max-width:1180px; margin:0 auto; display:flex; gap:16px; flex-wrap:wr
       <h3>One line sets up the whole PC</h3>
       <p>Open <b>PowerShell</b>, paste, press Enter, and say Yes when Windows asks. It installs Apollo, Tailscale and the bridge; opens the firewall to your home network and your Tailscale devices only; makes everything start with Windows, restart itself and update itself; keeps Tailscale connected even when nobody is signed in; and stops the PC going to sleep. Run it again any time — it only fixes what isn't right.</p>
       <div class="cmd"><code id="cmdAll">irm https://bytesizedata.github.io/apollo-home-stream/install.ps1 | iex</code><button type="button" data-copy="cmdAll">Copy</button></div>
-      <p>When Tailscale opens its sign-in page, use the <b>same account</b> you'll use on your phone and laptop. At the end it prints the address to use everywhere and a short list of things only you can do. To check on it later: add <code class="k">-Status</code>.</p>
+      <p>When Tailscale opens its sign-in page, use the <b>same account</b> you'll use on your phone and laptop. At the end it prints the address to use everywhere and a short list of things only you can do.</p>
+      <p><b>With an option</b> — the short line above can't take any, so use this one and change the last word: <code class="k">-Status</code> checks on it later, <code class="k">-SteamKey YOURKEY</code> adds your Steam key, <code class="k">-AutoLogon</code> signs the PC back in by itself after a power cut.</p>
+      <div class="cmd"><code id="cmdOpt">&amp; ([scriptblock]::Create((irm https://bytesizedata.github.io/apollo-home-stream/install.ps1))) -Status</code><button type="button" data-copy="cmdOpt">Copy</button></div>
     </div>
     <p style="margin-top:0">Prefer to do it by hand? These are the two installs that line does for you:</p>
     <div class="cards">
@@ -406,7 +408,8 @@ footer .in{max-width:1180px; margin:0 auto; display:flex; gap:16px; flex-wrap:wr
           <a class="btn" href="https://tailscale.com/download/android" target="_blank" rel="noopener">Android ↗</a>
           <a class="btn" href="https://tailscale.com/download/mac" target="_blank" rel="noopener">Mac ↗</a>
         </div>
-        <p style="font-size:12px">Linux or Steam Deck (Desktop Mode): <code class="k">curl -fsSL https://tailscale.com/install.sh | sh</code></p>
+        <p style="font-size:12px">Linux: <code class="k">curl -fsSL https://tailscale.com/install.sh | sh</code></p>
+        <p style="font-size:12px">Steam Deck: that command fails on SteamOS (its system files are read-only). In Desktop Mode use Tailscale's own Deck installer instead — it survives SteamOS updates: <a href="https://github.com/tailscale-dev/deck-tailscale" target="_blank" rel="noopener" style="color:var(--accent)">deck-tailscale ↗</a></p>
       </div>
       <div class="card">
         <h3><span class="ic">📱</span> Android phone or tablet</h3>
@@ -466,7 +469,7 @@ footer .in{max-width:1180px; margin:0 auto; display:flex; gap:16px; flex-wrap:wr
       </div>
       <div class="card">
         <h3><span class="ic">🔁</span> If the PC restarted while you're away</h3>
-        <p>After a Windows update it signs itself back in. After a power cut it waits at the sign-in screen — open Moonlight or Artemis, pick <b>Desktop</b>, and type your Windows password right there. Everything else starts by itself within a minute.</p>
+        <p>After a power cut — and on most PCs after a Windows update too — it waits at the sign-in screen. Tailscale and Apollo are already running, so open Moonlight or Artemis, pick <b>Desktop</b>, and type your Windows password right there. Everything else starts by itself within a minute. (The installer's <code class="k">-AutoLogon</code> option skips even that.)</p>
       </div>
       <div class="card">
         <h3><span class="ic">🌐</span> This website works everywhere</h3>
@@ -478,13 +481,14 @@ footer .in{max-width:1180px; margin:0 auto; display:flex; gap:16px; flex-wrap:wr
 
 <!-- ============ SLEEP & WAKE ============ -->
 <div class="wrap" id="viewPower" role="tabpanel" aria-labelledby="tabPower" hidden>
-  <p class="lede">A streaming PC is only useful if it's awake when you reach for it. Pick how you want yours to behave — you can set it up either way, and switch whenever.</p>
+  <p class="lede">A streaming PC is only useful if it's awake when you reach for it. The check below looks at your PC itself; the two cards under it are the how-to guides for each way of running it.</p>
 
   <div class="travel" id="travel">
     <div class="head"><span class="big" id="travelLamp"></span><h3 id="travelHead">Ready to travel?</h3><button type="button" class="btn" id="travelBtn" hidden>Check again</button></div>
     <p id="travelSub">Open this page from your PC's own address and it checks everything that could leave the PC unreachable while you're away: sleep, Tailscale, a Windows restart waiting to happen, Steam's saved sign-in.</p>
     <ul id="travelRows"></ul>
     <div class="applied" id="travelApplied" hidden></div>
+    <button type="button" class="btn" id="awakeBtn" hidden style="margin-top:10px"></button>
   </div>
 
   <div class="modes">
@@ -567,6 +571,7 @@ var GAMES=[
   G("cinder","Cinderhold","Ash & Ember",8,320,3,23)
 ];
 var DEMO=GAMES.slice();           // the invented library, used only when no bridge answers
+var ONPC=false;                    // true when this page is served by the bridge on the PC - even with an empty library
 var LIVE=false;                    // true once /api/games has answered (this page is served by the bridge)
 var SYNCED=false;                  // true when the public site has your Steam library baked in (steam.json)
 var BRIDGE=null;                   // saved bridge address on this screen (synced mode), e.g. http://gaming-station:8777
@@ -601,7 +606,7 @@ function loadLive(){
     if(!r.ok) throw 0; return r.json();
   }).then(function(d){
     if(!d||!d.games) throw 0;
-    LIVE=true;
+    LIVE=true; ONPC=true;
     GAMES=d.games.slice(0,24).map(fromBridge);
     if(d.host){ HOST.name=d.host; HOST.dns=d.host; }
     $("#hostText").textContent=HOST.name+" · connected"; $("#hostLamp").className="lamp";
@@ -754,7 +759,7 @@ function loadHealth(){
     });
     if(v && v.update && v.update.available){
       var u=document.createElement("span"); u.className="upd";
-      u.textContent="Update available · it installs itself within a few hours";
+      u.textContent = v.auto ? "Update available · it installs itself within a few hours" : "Update available · run the one-line installer again to get it";
       box.appendChild(u);
     } else if(v){
       var ver=document.createElement("span"); ver.className="c"; ver.style.marginLeft="auto"; ver.textContent="v"+v.version+(v.sha?" · "+v.sha:"")+(v.update&&v.update.available===false?" · up to date":"");
@@ -902,17 +907,26 @@ function travelRows(rep){
     li.appendChild(dot); li.appendChild(d); ul.appendChild(li);
   });
 }
+var GUIDE_SYNCED=false;
+var AWAKE=null;                                                                     // the PC's real state, as last reported by the bridge
 function appliedNote(a){
-  var el=$("#travelApplied"); if(!a){ el.hidden=true; return; }
-  el.hidden=false;
-  el.textContent = a.mode==="awake" ? (a.holding ? "Always awake is on: "+HOST.name+" is being kept awake right now." : "Always awake is saved — it takes effect the next time the bridge starts.")
-                 : (a.sleep_after_min ? HOST.name+" follows its own settings: sleeps after "+a.sleep_after_min+" min idle." : HOST.name+" follows its own sleep settings.");
-  el.style.color = a.never_sleeps ? "var(--ok)" : "var(--muted)";
+  var el=$("#travelApplied"), btn=$("#awakeBtn"); AWAKE=a||null;
+  if(!a){ el.hidden=true; btn.hidden=true; return; }
+  el.hidden=false; btn.hidden=!a.supported;
+  if(a.mode==="awake"){
+    el.textContent = a.holding ? "Always awake is ON: "+HOST.name+" is being kept awake right now." : "Always awake is saved - it takes effect the next time the bridge starts.";
+    btn.textContent="Let it sleep when idle instead";
+  } else {
+    el.textContent = a.sleep_after_min ? HOST.name+" is allowed to sleep: after "+a.sleep_after_min+" min idle it drops off, and it can't be woken from outside your home."
+                   : (a.never_sleeps ? HOST.name+" follows Windows' own settings, which are set to never sleep." : HOST.name+" follows its own sleep settings.");
+    btn.textContent="Keep it always awake";
+  }
+  el.style.color = a.never_sleeps ? "var(--ok)" : "var(--warn)";
 }
 function loadTravel(fresh){
-  if(!LIVE){
+  if(!ONPC){
     var sub=$("#travelSub");
-    if(BRIDGE){ sub.innerHTML=""; sub.appendChild(document.createTextNode("This check — and the switches below — only work from your PC's own page. "));
+    if(BRIDGE){ sub.innerHTML=""; sub.appendChild(document.createTextNode("This check - and the Always-awake switch - only work from your PC's own page. "));
       var a=document.createElement("a"); a.href=BRIDGE+"/#power"; a.textContent="Open it on "+BRIDGE.replace(/^https?:\/\//,"")+" →"; a.style.color="var(--accent)"; sub.appendChild(a); }
     return;
   }
@@ -922,17 +936,20 @@ function loadTravel(fresh){
       if(!rep) throw 0;
       $("#travelLamp").className="big "+rep.status; $("#travelHead").textContent=rep.headline; $("#travelSub").hidden=true; $("#travelBtn").hidden=false;
       travelRows(rep); appliedNote(rep.awake);
-      if(rep.awake && rep.awake.mode && S.mode!==rep.awake.mode){ S.mode=rep.awake.mode; save(); renderPower(); }       // the PC's saved choice is the truth
+      if(!GUIDE_SYNCED && rep.awake && rep.awake.mode){ GUIDE_SYNCED=true; if(S.mode!==rep.awake.mode){ S.mode=rep.awake.mode; save(); renderPower(); } }   // once per visit: open the guide that matches the PC
     }).catch(function(){ $("#travelHead").textContent="Couldn't check "+HOST.name; $("#travelBtn").hidden=false; });
 }
-function setMode(mode){
-  S.mode=mode; save(); renderPower();
-  if(!LIVE) return;                                                                 // on the public site this is a guide, not a switch
+function switchAwake(){
+  if(!ONPC||!AWAKE) return;
+  var mode = AWAKE.mode==="awake" ? "sleep" : "awake";
+  if(mode==="sleep" && !confirm(HOST.name+" will be allowed to go to sleep when idle - and a sleeping PC can't be woken from outside your home. Switch anyway?")) return;
+  var el=$("#travelApplied"), btn=$("#awakeBtn"); btn.disabled=true; el.style.color="var(--muted)"; el.textContent="Changing "+HOST.name+"…";
   fetch("/api/awake",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({mode:mode})})
     .then(function(r){ if(r.status===401){ location.replace("/pin"); throw 0; } return r.ok?r.json():null; })
-    .then(function(a){ if(a){ appliedNote(a); $("#hostText").textContent=HOST.name+(a.never_sleeps?" · always awake":" · connected"); } loadTravel(true); })
-    .catch(function(){ var el=$("#travelApplied"); el.hidden=false; el.style.color="var(--crit)"; el.textContent="Couldn't reach "+HOST.name+" - nothing was changed."; });
+    .then(function(a){ btn.disabled=false; if(a){ appliedNote(a); $("#hostText").textContent=HOST.name+(a.never_sleeps?" · always awake":" · connected"); S.mode=a.mode; save(); renderPower(); } loadTravel(true); })
+    .catch(function(){ btn.disabled=false; el.style.color="var(--warn)"; el.textContent="Couldn't confirm the change - checking what "+HOST.name+" says now…"; loadTravel(true); });   // the PC's answer is the truth, never a guess
 }
+function setMode(mode){ S.mode=mode; save(); renderPower(); }                       // the two cards only choose which guide is shown
 function renderPower(){
   var m=POWER[S.mode]||POWER.sleep;
   $("#modeSleep").setAttribute("aria-pressed",String(S.mode!=="awake"));
@@ -1045,6 +1062,7 @@ var gp=$("#gotoPower"); if(gp) gp.addEventListener("click",function(){ setTab("p
 $("#modeSleep").addEventListener("click",function(){ setMode("sleep"); });
 $("#modeAwake").addEventListener("click",function(){ setMode("awake"); });
 $("#travelBtn").addEventListener("click",function(){ loadTravel(true); });
+$("#awakeBtn").addEventListener("click",switchAwake);
 $("#resumeBtn").addEventListener("click",function(){ if(SYNCED) streamViaBridge(game(S.last)); else play(S.last); });
 $("#stageClose").addEventListener("click",stop);
 $("#launch").addEventListener("click",function(e){ if(e.target===this) stop() });

@@ -52,10 +52,27 @@ jobs:
         shell: powershell
         run: |
           powershell -NoProfile -ExecutionPolicy Bypass -File install/windows.ps1 -DryRun -Uninstall
+      - name: The two forms every real owner goes through (scriptblock form, and the elevated -Stage Admin child)
+        shell: powershell
+        run: |
+          $dir = Join-Path $env:RUNNER_TEMP "ApolloHomeStream"
+          Write-Host "---- as a scriptblock (what 'irm | iex' and the options line run): no file path, no exit"
+          & ([scriptblock]::Create((Get-Content -Raw install/windows.ps1))) -DryRun -NoApollo -NoTailscale -InstallDir $dir -Port 8795
+          Write-Host "---- still alive after the scriptblock form (it must never 'exit' the owner's window)"
+          Write-Host "---- the elevated child, called exactly as the parent calls it"
+          $log = Join-Path $env:RUNNER_TEMP "admin stage.log"
+          $me = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+          powershell -NoProfile -ExecutionPolicy Bypass -File install/windows.ps1 -Stage Admin -LogFile "$log" -ForUser "$me" -Pin "48-21_x" -Port 8795 -InstallDir "$dir" -NoApollo -NoTailscale
+          $verdict = Get-Content $log | Where-Object { $_ -match '^RESULT ' } | Select-Object -Last 1
+          Write-Host "child exit code $LASTEXITCODE, verdict: $verdict"
+          if ($verdict -ne "RESULT ok") { Get-Content $log; throw "the admin stage did not report RESULT ok" }
+          $t = Get-ScheduledTask -TaskName "Apollo Home Stream bridge"
+          if ($t.Actions[0].Arguments -notmatch '--pin "48-21_x"') { throw "the PIN did not survive the hand-off: $($t.Actions[0].Arguments)" }
       - name: Real install on a real Windows machine, -Status, then -Uninstall
         shell: powershell
         run: |
           $dir = Join-Path $env:RUNNER_TEMP "ApolloHomeStream"
+          # no -Pin here on purpose: the run must inherit the PIN the previous step's task carries, not fall back to the default
           powershell -NoProfile -ExecutionPolicy Bypass -File install/windows.ps1 -NoApollo -NoTailscale -InstallDir $dir -RepoUrl $env:GITHUB_WORKSPACE -Port 8795
           $code = $LASTEXITCODE
           Write-Host "---- installer exit code: $code"
@@ -78,7 +95,8 @@ jobs:
             if ("$($t.Settings.MultipleInstances)" -ne "IgnoreNew") { $fail += "MultipleInstances is $($t.Settings.MultipleInstances)" }
             if ($t.Actions[0].Execute -notmatch "pythonw\.exe$") { $fail += "task runs $($t.Actions[0].Execute), not pythonw.exe" }
             if (-not (Test-Path $t.Actions[0].Execute)) { $fail += "task points at a missing interpreter" }
-            if ($t.Actions[0].Arguments -notmatch "--auto-update" -or $t.Actions[0].Arguments -notmatch "--log") { $fail += "task arguments: $($t.Actions[0].Arguments)" }
+            if ($t.Actions[0].Arguments -notmatch "--auto-update" -or $t.Actions[0].Arguments -notmatch "--supervised" -or $t.Actions[0].Arguments -notmatch "--log") { $fail += "task arguments: $($t.Actions[0].Arguments)" }
+            if ($t.Actions[0].Arguments -notmatch '--pin "48-21_x"') { $fail += "a re-run reset the PIN the owner chose: $($t.Actions[0].Arguments)" }
             Write-Host "task: $($t.Actions[0].Execute) $($t.Actions[0].Arguments)"
           }
           $r = Get-NetFirewallRule -DisplayName "Apollo Home Stream bridge (TCP 8795, home network + Tailscale)" -ErrorAction SilentlyContinue
@@ -89,6 +107,8 @@ jobs:
           }
           try { $ok = (Invoke-WebRequest http://127.0.0.1:8795/pin -UseBasicParsing -TimeoutSec 5).StatusCode -eq 200 } catch { $ok = $false }
           if (-not $ok) { $fail += "bridge is not answering on 8795" }
+          $me = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+          foreach ($p in @($dir, (Join-Path $dir ".git"), (Join-Path $dir "bridge\apollo_bridge.py"))) { $o = (Get-Acl $p).Owner; if ($o -ne $me) { $fail += "$p is owned by $o, not $me - the everyday account's git would refuse it" } }
           $cfg = Join-Path $env:USERPROFILE ".apollo-home-stream\config.json"
           if (-not (Test-Path $cfg) -or ((Get-Content $cfg -Raw) -notmatch '"awake":\s*"awake"')) { $fail += "always-awake choice was not saved" }
           Write-Host "---- -Status"

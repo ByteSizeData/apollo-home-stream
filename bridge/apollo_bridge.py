@@ -94,12 +94,33 @@ def parse_vdf(text):
     return parse_block()
 
 
+def steam_path_from_registry():
+    """Where Steam says it lives - gaming PCs often keep it on D: or E:, which no fixed list can guess."""
+    found = []
+    try:
+        import winreg
+    except ImportError:
+        return found
+    for root, path, name in ((winreg.HKEY_CURRENT_USER, r"Software\Valve\Steam", "SteamPath"),
+                             (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\Valve\Steam", "InstallPath"),
+                             (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Valve\Steam", "InstallPath")):
+        try:
+            with winreg.OpenKey(root, path) as k:
+                v = winreg.QueryValueEx(k, name)[0]
+            if isinstance(v, str) and v:
+                found.append(os.path.normpath(v))
+        except OSError:
+            continue
+    return found
+
+
 def default_steam_paths():
     sysname = platform.system()
     home = os.path.expanduser("~")
     if sysname == "Windows":
         cands = [
             os.environ.get("STEAM_PATH", ""),
+        ] + steam_path_from_registry() + [
             os.path.join(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"), "Steam"),
             os.path.join(os.environ.get("ProgramFiles", r"C:\Program Files"), "Steam"),
             r"C:\Steam", r"D:\Steam", r"D:\SteamLibrary", r"E:\SteamLibrary",
@@ -231,6 +252,8 @@ class Bridge:
         self.port = 8777
         self.network = True
         self._care_lock = threading.Lock()
+        self._travel_lock = threading.Lock()      # the travel check shells out for many seconds: never make health/host wait for it
+        self.auto_update = False                  # set by main(): does this run update itself?
         self._cache = ([], 0.0)
         self._sessions = {}          # sha256(token) -> expiry (unix seconds); the token itself is never kept
         self.sessions_path = None    # set by main(): sessions then survive restarts and self-updates
@@ -388,24 +411,22 @@ class Bridge:
         return checks
 
     def awake(self, fresh=False):
-        with self._care_lock:
-            a = getattr(self, "_awake", None)
-            if fresh or not a or time.time() - a[1] > 30:
-                a = (travel.awake_state(), time.time())
-                self._awake = a
-            return a[0]
+        a = getattr(self, "_awake", None)                    # no lock: two powercfg reads at worst, and nothing queues behind a slow check
+        if fresh or not a or time.time() - a[1] > 30:
+            a = (travel.awake_state(), time.time())
+            self._awake = a
+        return a[0]
 
     def set_awake(self, mode):
         state = travel.set_awake(mode)
-        with self._care_lock:
-            self._awake = (state, time.time())
-            self._preflight = None
+        self._awake = (state, time.time())
+        self._preflight = None                               # plain assignments: never wait behind a running travel check
         return state
 
     def preflight(self, fresh=False):
-        with self._care_lock:
+        with self._travel_lock:
             p = getattr(self, "_preflight", None)
-            if fresh or not p or time.time() - p[1] > 60:
+            if not p or time.time() - p[1] > (5 if fresh else 60):       # "fresh" still can't be hammered: one real run per 5 s
                 p = (travel.preflight(self, network=self.network), time.time())
                 self._preflight = p
             return p[0]
@@ -426,6 +447,8 @@ class Bridge:
 
 def make_handler(bridge):
     class Handler(SimpleHTTPRequestHandler):
+        timeout = 30          # a phone that dropped off mid-connection must not hold a socket (and a thread) forever
+
         def __init__(self, *a, **kw):
             super().__init__(*a, directory=WEB_DIR, **kw)
 
@@ -511,7 +534,7 @@ def make_handler(bridge):
                 fresh = parse_qs(urlparse(self.path).query).get("fresh", [""])[0] == "1"
                 return self._json(200, bridge.preflight(fresh=fresh))
             if path == "/api/version":
-                return self._json(200, {"version": selfcare.VERSION, "sha": (selfcare.local_sha() or "")[:7], "update": bridge.update_info()})
+                return self._json(200, {"version": selfcare.VERSION, "sha": (selfcare.local_sha() or "")[:7], "update": bridge.update_info(), "auto": bool(bridge.auto_update)})
             if path == "/":
                 self.path = "/index.html"
             return super().do_GET()
@@ -645,11 +668,25 @@ def bridge_addresses(port):
     return out or ["http://localhost:%d" % port]
 
 
-def restart(new_sha):
-    """Re-run this process with the same arguments. On Windows os.execv mangles quoting, so spawn instead."""
+def restart(new_sha, supervised=False):
+    """Run the new code. Under the installer's startup task (--supervised) simply exit: the task's every-minute
+    watchdog starts a fresh process, and nothing of the old one lingers. Otherwise re-run with the same arguments;
+    on Windows os.execv mangles quoting, so spawn - and make this process an inert parent first."""
+    if supervised:
+        print("exiting - the startup task brings the new version up within a minute")
+        sys.stdout.flush()
+        sys.exit(0)
     env = dict(os.environ, APOLLO_RESTARTED_FOR=new_sha or "")   # one restart per version, never a loop
     argv = [sys.executable] + sys.argv
     if os.name == "nt":
+        travel.HOLD.set(False)                                   # the child takes its own; ours would outlive "let it sleep"
+        for stream in (sys.stdout, sys.stderr):                  # let go of the log so the child can rotate it
+            try:
+                if getattr(stream, "name", "") not in ("<stdout>", "<stderr>"):
+                    stream.close()
+            except Exception:  # noqa: BLE001
+                pass
+        sys.stdout = sys.stderr = open(os.devnull, "w")
         sys.exit(subprocess.call(argv, env=env))
     os.execve(sys.executable, argv, env)
 
@@ -692,8 +729,11 @@ def setup_logging(path):
     if path:
         try:
             os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
-            if os.path.exists(path) and os.path.getsize(path) > 5 * 1024 * 1024:      # keep one previous log
-                os.replace(path, path + ".1")
+            try:
+                if os.path.exists(path) and os.path.getsize(path) > 5 * 1024 * 1024:  # keep one previous log
+                    os.replace(path, path + ".1")
+            except OSError:
+                pass                                                                    # someone has it open: keep appending, never go silent
             f = open(path, "a", encoding="utf-8", buffering=1)
             sys.stdout = sys.stderr = f
             print("---- bridge started %s ----" % time.strftime("%Y-%m-%d %H:%M:%S"))
@@ -732,6 +772,8 @@ def main():
     ap.add_argument("--preflight", action="store_true", help="ready to travel? check sleep, Tailscale, restarts, Steam sign-in; exit 1 if not ready")
     ap.add_argument("--set-awake", choices=["on", "off"], default=None,
                     help="on = the bridge keeps this PC from sleeping whenever it runs; off = let it sleep. Saved, then exit")
+    ap.add_argument("--supervised", action="store_true",
+                    help="something restarts this bridge whenever it exits (the installer's startup task): after an update, just exit")
     ap.add_argument("--log", default="", help="write output to this file (used by the Windows logon task, which runs hidden)")
     ap.add_argument("--steam-key", default="",
                     help="Steam Web API key for this run only (steamcommunity.com/dev/apikey). To keep it: --set-steam-key")
@@ -800,6 +842,12 @@ def main():
         ok, msg, _, _ = selfcare.apply_update()
         print(msg)
         sys.exit(0 if ok else 1)
+    if not args.dry_run:
+        busy = selfcare.check_port(args.port)                # first: a second copy must not check for updates, let alone apply one
+        if busy["status"] != "ok":
+            print("port %d is %s" % (args.port, busy["detail"]))
+            print("stop the other one, or start this one with --port 8778")
+            sys.exit(1)
     if not args.no_network:
         u = selfcare.update_status(timeout=3)
         if u["available"]:
@@ -809,7 +857,7 @@ def main():
                 print(msg)
                 if ok and after and after != before:
                     print("restarting with the new version...")
-                    restart(after)                              # never re-exec unless the code actually changed
+                    restart(after, supervised=args.supervised)  # never re-exec unless the code actually changed
             elif u["available"]:
                 print("update available: %s -> %s  - run  python bridge/apollo_bridge.py --update" % ((u["local"] or "?")[:7], u["remote"][:7]))
 
@@ -832,11 +880,6 @@ def main():
     if not os.path.isdir(WEB_DIR):
         print("web/ folder not found next to bridge/ — page won't load.", file=sys.stderr)
 
-    busy = selfcare.check_port(args.port)
-    if busy["status"] != "ok":
-        print("port %d is %s" % (args.port, busy["detail"]))
-        print("stop the other one, or start this one with --port 8778")
-        sys.exit(1)
     bridge.load_sessions(os.path.join(os.path.dirname(steamaccount.CONFIG_PATH), "sessions.json"))   # a restart doesn't sign every screen out
     travel.resume_awake()
     srv = Server((args.bind, args.port), make_handler(bridge))
@@ -858,7 +901,8 @@ def main():
     print("Sleep: %s" % ("the bridge keeps this PC awake" if travel.HOLD.held else "this PC follows its own sleep settings (Sleep & wake tab to change)"))
     print("Open that address from any device on your network or tailnet. Ctrl-C to stop.")
     state = {}
-    if args.auto_update and not args.no_network:
+    bridge.auto_update = bool(args.auto_update and not args.no_network)
+    if bridge.auto_update:
         threading.Thread(target=auto_update_loop, args=(bridge, srv, state), daemon=True, name="auto-update").start()
     try:
         srv.serve_forever()
@@ -867,7 +911,7 @@ def main():
     srv.server_close()
     if state.get("restart_to"):
         print("restarting with the new version...")
-        restart(state["restart_to"])
+        restart(state["restart_to"], supervised=args.supervised)
 
 
 if __name__ == "__main__":
