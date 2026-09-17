@@ -129,6 +129,8 @@ h2.sec{font-family:"Archivo",sans-serif; font-stretch:116%; font-weight:700; fon
 .game h3{font-size:13.5px; font-weight:600; line-height:1.3; margin:10px 2px 1px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
 .game .meta{font-family:"IBM Plex Mono",monospace; font-size:11px; color:var(--dim); margin:0 2px}
 .lamp.off{background:var(--dim); box-shadow:none}
+.host .lamp.warn{background:var(--warn); box-shadow:0 0 0 3px color-mix(in srgb,var(--warn) 20%,transparent)}
+.host .lamp.fail{background:var(--crit); box-shadow:0 0 0 3px color-mix(in srgb,var(--crit) 20%,transparent)}
 
 /* ---- connections strip (live mode only) ---- */
 .conn{display:flex; flex-wrap:wrap; gap:6px 14px; align-items:center; margin:-22px 0 30px; font-size:12.5px; color:var(--muted)}
@@ -605,18 +607,26 @@ function bridgeStrip(){
   return BRIDGE ? '<i class="ok"></i>streams to '+BRIDGE.replace(/^https?:\/\//,"")+' · <a href="#" id="bridgeChange" style="color:var(--accent)">change</a>' : '<i class="warn"></i>not connected to your PC yet';
 }
 function wireBridgeChange(){ var ch=$("#bridgeChange"); if(ch) ch.addEventListener("click",function(e){ e.preventDefault(); $("#connect").hidden=false; $("#bridgeAddr").focus(); }); }
+function syncAge(ts){
+  var h=(Date.now()/1000-ts)/3600;
+  var txt = h<1 ? "under an hour ago" : h<24 ? Math.round(h)+" hour"+(Math.round(h)===1?"":"s")+" ago" : Math.round(h/24)+" day"+(Math.round(h/24)===1?"":"s")+" ago";
+  return {text:txt, level: h<8 ? "ok" : h<36 ? "warn" : "fail"};          // GitHub syncs a few times a day; a day and a half of silence means it broke
+}
 function showSynced(d){
   SYNCED=true; $("#unlock").hidden=true; $("#demoBanner").hidden=true;
+  if(d.bridge && !BRIDGE){ BRIDGE=bridgeNormalize(d.bridge); }                 // the PC's address rides inside the encrypted data: nothing to type
   GAMES=d.games.slice(0,60).map(function(g){ var h=(g.appid*2654435761)>>>0; return {id:String(g.appid), appid:g.appid, title:g.title, studio:"Steam", h1:h%360, h2:(h>>8)%360, pat:g.appid%4,
     hours:g.minutes?Math.round(g.minutes/6)/10:0, hours2w:g.minutes_2w?Math.round(g.minutes_2w/6)/10:0, last:g.last_played, cover:g.cover}; });
   if(!GAMES.length){ GAMES=DEMO; }
   S.last=GAMES[0].id; save();
   showAccount({connected:true, persona:d.persona, avatar:d.avatar, source:"web", web_updated:d.updated});
-  $("#hostText").textContent="Synced with Steam · "+ago(d.updated).replace("today","just now");
+  var age=syncAge(d.updated);
+  $("#hostText").textContent="Synced with Steam · "+age.text; $("#hostLamp").className="lamp"+(age.level==="ok"?"":" "+age.level);
   renderGames(); renderResume();
   $("#connect").hidden=!!BRIDGE; if(BRIDGE) $("#bridgeAddr").value=BRIDGE;
   var lk=$("#lockBtn"); lk.hidden=false; lk.textContent="Lock this screen"; lk.onclick=function(){ try{ localStorage.removeItem("apollo.sync.key"); }catch(e){} location.reload(); };
-  var c=$("#conn"); c.hidden=false; c.innerHTML='<span class="eyebrow">Steam</span><span class="c"><i class="ok"></i>'+d.totals.games+' games · '+d.totals.hours+' h total · '+d.totals.hours_2w+' h in the last two weeks</span>'+
+  var c=$("#conn"); c.hidden=false; c.innerHTML='<span class="eyebrow">Steam</span><span class="c"><i class="'+age.level+'"></i>'+d.totals.games+' games · '+d.totals.hours+' h total · '+d.totals.hours_2w+' h in the last two weeks'+
+    (age.level==="fail"?' · <b style="color:var(--crit)">last synced '+age.text+' - the sync has stopped (check the Steam key in GitHub)</b>':age.level==="warn"?' · synced '+age.text:'')+'</span>'+
     '<span class="c" id="bridgeState" style="margin-left:auto">'+bridgeStrip()+'</span>';
   wireBridgeChange();
 }

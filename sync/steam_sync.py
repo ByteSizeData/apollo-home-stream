@@ -6,6 +6,11 @@ Action; the output is encrypted with your PIN / passphrase so the public site ca
     STEAM_API_KEY     your Web API key (steamcommunity.com/dev/apikey)
     STEAM_ID          your 64-bit Steam ID, or a profile URL / vanity name
     SITE_PASSPHRASE   what unlocks the data in the browser (default: the PIN, 2550)
+    BRIDGE_URL        optional: your PC's bridge address (ideally the Tailscale one). It rides inside the
+                      encrypted data, so every screen that knows the PIN also knows where to stream from.
+
+Exit codes: 0 = synced, or nothing to do yet (no secrets); 3 = Steam refused or was unreachable
+(the workflow keeps deploying the site but raises an alert so a dead key never goes unnoticed).
 
     python sync/steam_sync.py --out web/steam.json
     python sync/steam_sync.py --plain --out /tmp/steam.json      # unencrypted, for a look
@@ -69,6 +74,25 @@ def fetch(key, steamid):
     }
 
 
+def clean_bridge_url(v):
+    """Only a plain http(s) origin is allowed to ride along - no paths, queries, credentials or other schemes."""
+    v = (v or "").strip().rstrip("/")
+    if not v:
+        return ""
+    if not re.match(r"^https?://", v, re.I):
+        v = "http://" + v
+    try:
+        u = urllib.parse.urlsplit(v)
+        if u.scheme not in ("http", "https") or not u.hostname or u.username or u.password or u.query or u.fragment or (u.path not in ("", "/")):
+            return ""
+        if not re.match(r"^[A-Za-z0-9.-]+$", u.hostname):
+            return ""
+        port = (":%d" % u.port) if u.port else ("" if u.scheme == "https" else ":8777")
+    except ValueError:                       # "http://javascript:alert(1)" -> the "port" isn't a number
+        return ""
+    return "%s://%s%s" % (u.scheme, u.hostname, port)
+
+
 def encrypt(obj, passphrase):
     """AES-256-GCM, key from PBKDF2-HMAC-SHA256 - decryptable with WebCrypto in the browser."""
     from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -102,9 +126,13 @@ def main(argv=None):
         data = fetch(key, steamid)
     except SystemExit:
         raise
-    except Exception as e:  # noqa: BLE001 - the site still deploys; the library just isn't refreshed this time
-        print("Steam sync skipped this run: %s (%s). The site deploys without a fresh library." % (type(e).__name__, str(e)[:120]))
-        return 0
+    except Exception as e:  # noqa: BLE001 - the site still deploys; but say so loudly (exit 3 -> the workflow's alert job)
+        hint = " - has the Steam key been revoked? Update the STEAM_API_KEY secret." if "403" in str(e) or "401" in str(e) else ""
+        print("::error title=Steam sync failed::%s: %s%s" % (type(e).__name__, str(e)[:120], hint))
+        return 3
+    bridge = clean_bridge_url(os.environ.get("BRIDGE_URL", ""))
+    if bridge:
+        data["bridge"] = bridge
     out = data if args.plain else encrypt(data, passphrase)
     os.makedirs(os.path.dirname(os.path.abspath(args.out)), exist_ok=True)
     with open(args.out, "w", encoding="utf-8") as f:

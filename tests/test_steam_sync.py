@@ -101,3 +101,33 @@ class Main(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BridgeUrlAndAlerts(unittest.TestCase):
+    def test_only_a_plain_origin_may_ride_along(self):
+        ok = {"gaming-station.tail1a2b.ts.net": "http://gaming-station.tail1a2b.ts.net:8777",
+              "http://192.168.1.20:8777/": "http://192.168.1.20:8777",
+              "https://gaming-station.tail1a2b.ts.net": "https://gaming-station.tail1a2b.ts.net",
+              "HTTP://PC:9000": "http://pc:9000"}
+        for raw, want in ok.items():
+            self.assertEqual(ss.clean_bridge_url(raw), want, raw)
+        for bad in ("", "javascript:alert(1)", "ftp://pc", "http://user:pw@pc:8777", "http://pc:8777/?play=1", "http://pc:8777/x", "http://pc:8777#f", "data:text/html,x"):
+            self.assertEqual(ss.clean_bridge_url(bad), "", bad)
+
+    def test_bridge_url_is_inside_the_data_not_beside_it(self):
+        env = {"STEAM_API_KEY": "KEY", "STEAM_ID": SID, "BRIDGE_URL": "gaming-station.tail1a2b.ts.net"}
+        with mock.patch.dict(os.environ, env), mock.patch.object(ss, "_get", fake_get), tempfile.TemporaryDirectory() as d:
+            out = os.path.join(d, "steam.json")
+            with mock.patch("sys.stdout", io.StringIO()):
+                self.assertEqual(ss.main(["--plain", "--out", out]), 0)
+            self.assertEqual(json.load(open(out))["bridge"], "http://gaming-station.tail1a2b.ts.net:8777")
+
+    def test_steam_refusing_the_key_exits_3_and_says_why(self):
+        import urllib.error
+        def refuse(*a, **k): raise urllib.error.HTTPError("u", 403, "Forbidden", {}, None)
+        with mock.patch.dict(os.environ, {"STEAM_API_KEY": "KEY", "STEAM_ID": SID}), mock.patch.object(ss, "_get", refuse), tempfile.TemporaryDirectory() as d:
+            buf = io.StringIO()
+            with mock.patch("sys.stdout", buf):
+                rc = ss.main(["--out", os.path.join(d, "steam.json")])
+            self.assertEqual(rc, 3); self.assertIn("::error", buf.getvalue()); self.assertIn("revoked", buf.getvalue())
+            self.assertNotIn("KEY", buf.getvalue().replace("STEAM_API_KEY", ""))

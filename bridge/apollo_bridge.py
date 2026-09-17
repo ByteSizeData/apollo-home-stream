@@ -555,6 +555,26 @@ def restart(new_sha):
     os.execve(sys.executable, argv, env)
 
 
+def setup_logging(path):
+    """Send everything the bridge prints to a file. Essential under pythonw.exe (the hidden logon task), where
+    sys.stdout/sys.stderr are None and http.server would crash the first time it tried to log a request."""
+    if path:
+        try:
+            os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+            if os.path.exists(path) and os.path.getsize(path) > 5 * 1024 * 1024:      # keep one previous log
+                os.replace(path, path + ".1")
+            f = open(path, "a", encoding="utf-8", buffering=1)
+            sys.stdout = sys.stderr = f
+            print("---- bridge started %s ----" % time.strftime("%Y-%m-%d %H:%M:%S"))
+            return
+        except OSError:
+            pass
+    if sys.stdout is None or sys.stderr is None:                                        # pythonw with no --log: never crash on print
+        sink = open(os.devnull, "w")
+        sys.stdout = sys.stdout or sink
+        sys.stderr = sys.stderr or sink
+
+
 def _console_safe():
     """Windows consoles/redirects may be cp1252; never let a stray character kill the bridge."""
     for stream in (sys.stdout, sys.stderr):
@@ -578,6 +598,7 @@ def main():
     ap.add_argument("--update", action="store_true", help="update this copy from GitHub (git pull, or a verified zip), run the tests, then exit")
     ap.add_argument("--auto-update", action="store_true", default=os.environ.get("APOLLO_AUTO_UPDATE") == "1",
                     help="at startup, apply any available update and restart (or APOLLO_AUTO_UPDATE=1)")
+    ap.add_argument("--log", default="", help="write output to this file (used by the Windows logon task, which runs hidden)")
     ap.add_argument("--steam-key", default="",
                     help="Steam Web API key for this run only (steamcommunity.com/dev/apikey). To keep it: --set-steam-key")
     ap.add_argument("--set-steam-key", metavar="KEY", default=None,
@@ -588,6 +609,7 @@ def main():
     ap.add_argument("--token", default=os.environ.get("APOLLO_TOKEN", ""), help="additionally require this X-Apollo-Token header to launch")
     ap.add_argument("--dry-run", action="store_true", help="scan and print, then exit")
     args = ap.parse_args()
+    setup_logging(args.log)
     if args.set_steam_key is not None:
         key = args.set_steam_key.strip()
         if not steamaccount.looks_like_key(key):

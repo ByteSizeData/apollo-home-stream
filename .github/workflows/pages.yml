@@ -5,7 +5,9 @@ on:
     branches: [main]
     paths: ["web/**", "bridge/**", "sync/**", "tests/**", ".github/workflows/pages.yml"]
   schedule:
-    - cron: "*/30 * * * *"        # refresh the site's copy of your Steam library every 30 minutes
+    # GitHub runs free-tier schedules when it has spare capacity: measured over a week, "*/30" really ran about
+    # every 4 hours. Off-peak minutes queue a little better; the page shows the library's true age either way.
+    - cron: "13,43 * * * *"
   workflow_dispatch:
 
 permissions:
@@ -43,6 +45,8 @@ jobs:
 
   deploy:
     needs: check
+    outputs:
+      sync: ${{ steps.sync.outcome }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -57,10 +61,12 @@ jobs:
         with:
           python-version: "3.12"
       - name: Sync your Steam library into the site (skips until the secrets exist)
+        id: sync
         env:
           STEAM_API_KEY: ${{ secrets.STEAM_API_KEY }}
           STEAM_ID: ${{ secrets.STEAM_ID }}
           SITE_PASSPHRASE: ${{ secrets.SITE_PASSPHRASE }}
+          BRIDGE_URL: ${{ secrets.BRIDGE_URL }}
         continue-on-error: true            # a Steam hiccup must not stop the site itself from publishing
         run: |
           python -m pip install -q "cryptography>=42"
@@ -71,3 +77,15 @@ jobs:
           path: web
       - id: deployment
         uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4
+
+  sync-alert:
+    # The site still published - but if Steam refused the sync, fail THIS job so GitHub emails you.
+    # (A revoked key would otherwise leave the library stale forever behind green check marks.)
+    name: Steam sync health
+    needs: deploy
+    if: ${{ always() && needs.deploy.outputs.sync == 'failure' }}
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          echo "::error title=Steam sync failed::The site deployed, but your Steam library was NOT refreshed. Most likely the Steam Web API key was revoked or mistyped - update the STEAM_API_KEY secret (Settings > Secrets and variables > Actions), then run this workflow again."
+          exit 1
