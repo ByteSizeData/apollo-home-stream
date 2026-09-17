@@ -15,8 +15,8 @@ try:
     HAVE_CRYPTO = True
 except ImportError:
     HAVE_CRYPTO = False
-if not HAVE_CRYPTO and os.environ.get("CI"):
-    raise RuntimeError("cryptography is missing in CI - the encryption tests must not be skipped there")
+if not HAVE_CRYPTO and os.environ.get("APOLLO_REQUIRE_CRYPTO"):   # set by the CI test matrix; never on someone's PC, where the bridge's self-test runs these too
+    raise RuntimeError("cryptography is missing - the encryption tests must not be skipped in the CI matrix")
 
 SID = "76561198012345678"
 

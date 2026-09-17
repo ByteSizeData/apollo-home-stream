@@ -17,13 +17,15 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
-        python: ["3.9", "3.12"]
+        python: ["3.9", "3.12", "3.14"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ matrix.python }}
       - name: Unit + HTTP tests (incl. the encryption tests - cryptography is required in CI)
+        env:
+          APOLLO_REQUIRE_CRYPTO: "1"
         run: |
           python -m pip install -q "cryptography>=42"
           python -m unittest discover -s tests -v
@@ -59,7 +61,17 @@ jobs:
           Write-Host "---- installer exit code: $code"
           Get-Content (Join-Path $dir "bridge.log") -ErrorAction SilentlyContinue | Select-Object -Last 30
           $fail = @()
-          if ($code -ne 0) { $fail += "installer exit code $code" }
+          if ($code -ne 0) {
+            $fail += "installer exit code $code"
+            $t0 = Get-ScheduledTask -TaskName "Apollo Home Stream bridge" -ErrorAction SilentlyContinue
+            if ($t0) {                                       # show exactly what the installed copy's own tests say, with the interpreter it uses
+              $py = $t0.Actions[0].Execute -replace "pythonw\.exe$", "python.exe"
+              Write-Host "---- unit tests of the installed copy under $py"
+              $ErrorActionPreference = "Continue"
+              & $py -m unittest discover -s (Join-Path $dir "tests") 2>&1 | ForEach-Object { "$_" } | Where-Object { $_ -notmatch '" \d{3} -$' } | Select-Object -Last 80
+              $ErrorActionPreference = "Stop"
+            }
+          }
           $t = Get-ScheduledTask -TaskName "Apollo Home Stream bridge" -ErrorAction SilentlyContinue
           if (-not $t) { $fail += "scheduled task missing" } else {
             if (@($t.Triggers).Count -ne 2) { $fail += "expected 2 triggers (sign-in + watchdog), got $(@($t.Triggers).Count)" }

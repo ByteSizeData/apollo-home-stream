@@ -236,7 +236,12 @@ def run_unit_tests():
     tail = (r.stderr or r.stdout).strip().splitlines()
     summary = next((l for l in reversed(tail) if l.startswith(("OK", "FAILED", "Ran "))), "no output")
     ran = next((l for l in tail if l.startswith("Ran ")), "")
-    return {"name": "unit tests", "status": "ok" if r.returncode == 0 else "fail", "detail": (ran + " - " + summary).strip(" -")}
+    detail = (ran + " - " + summary).strip(" -")
+    if r.returncode != 0:                                  # name the culprits: "FAILED (failures=1)" alone helps nobody
+        bad = [l.split(" ", 1)[1].strip() for l in tail if l.startswith(("FAIL: ", "ERROR: "))]
+        if bad:
+            detail += " - " + "; ".join(bad[:3]) + (" (+%d more)" % (len(bad) - 3) if len(bad) > 3 else "")
+    return {"name": "unit tests", "status": "ok" if r.returncode == 0 else "fail", "detail": detail}
 
 
 def self_test(bridge, port=8777, network=True, allow_missing_steam=False, with_unit_tests=True):
