@@ -338,6 +338,10 @@ def update_status(timeout=NET_TIMEOUT):
             raise Timeout("no answer")
     except urllib.error.HTTPError as e:
         why = "GitHub rate limit - try again in an hour" if e.code in (403, 429) else "GitHub answered HTTP %d" % e.code
+        try:
+            e.close()                                        # an HTTPError is an open response; don't leave it to the garbage collector
+        except Exception:  # noqa: BLE001
+            pass
         return {"available": None, "local": loc, "remote": None, "error": "couldn't check for updates: " + why}
     except (urllib.error.URLError, socket.gaierror, ConnectionError):
         return {"available": None, "local": loc, "remote": None, "error": "couldn't check for updates: no internet, or DNS isn't working"}
