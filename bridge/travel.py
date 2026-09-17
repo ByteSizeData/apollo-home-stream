@@ -182,11 +182,11 @@ def check_sleep():
         return _c("stays awake", True, "Windows is set to never sleep" + (", and the bridge holds it awake too" if st["holding"] else ""))
     if st["holding"]:                                        # the hold only exists while someone is signed in and the bridge runs
         return _c("stays awake", False, "kept awake only while you're signed in - Windows' own timer is still %s min, so it would sleep at the sign-in screen after a restart"
-                  % st["sleep_after_min"], fail=False, fix="Press Keep it always awake again, or run the installer again.")
+                  % st["sleep_after_min"], fail=False, fix="Run the one-line installer again - it sets Windows itself to never sleep.")
     if st["sleep_after_min"] is None:
         return _c("stays awake", False, "couldn't read this system's sleep setting", fail=False)
     return _c("stays awake", False, "this PC goes to sleep after %d min idle - and a sleeping PC can't be woken from outside your home" % st["sleep_after_min"],
-              fix="Switch to Always awake on this page before you leave.")
+              fix="Press 'Keep it always awake' on this page before you leave.")
 
 
 # ----------------------------------------------------------------------------- tailscale

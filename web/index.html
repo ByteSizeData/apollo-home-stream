@@ -205,7 +205,8 @@ h2.sec{font-family:"Archivo",sans-serif; font-stretch:116%; font-weight:700; fon
   display:flex; align-items:center; gap:12px; background:var(--panel-2); border:1px solid var(--line);
   border-radius:9px; padding:12px 14px; font-family:"IBM Plex Mono",monospace; font-size:13px; overflow-x:auto;
 }
-.cmd code{white-space:nowrap}
+.cmd{min-width:0; max-width:100%}
+.cmd code{white-space:nowrap; overflow-x:auto; min-width:0; scrollbar-width:thin}      /* a long command scrolls inside its box; it never widens the page */
 .cmd button{margin-left:auto; flex:none; font-size:12px; color:var(--accent); font-weight:600; padding:3px 8px; border:1px solid var(--line); border-radius:6px}
 .note{
   display:flex; gap:11px; border:1px solid color-mix(in srgb,var(--warn) 42%,var(--line));
@@ -238,6 +239,7 @@ code.k{font-family:"IBM Plex Mono",monospace; font-size:12.5px; background:var(-
 .oscol h3{font-size:16px; font-weight:700; display:flex; align-items:center; gap:9px; margin-bottom:6px}
 .oslist{list-style:none; margin:14px 0 0; padding:0; display:flex; flex-direction:column; gap:16px; counter-reset:o}
 .oslist li{display:flex; gap:12px; font-size:13.5px; color:var(--muted)}
+.oslist li > div{min-width:0; flex:1}
 .oslist li.plain::before{content:none; counter-increment:none}
 .oslist li.plain{padding-left:0}
 .oslist li::before{
