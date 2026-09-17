@@ -19,6 +19,7 @@ to see it. The game never leaves this machine.
 """
 import argparse
 import glob
+import hashlib
 import hmac
 import json
 import os
@@ -35,6 +36,7 @@ from http.cookies import SimpleCookie
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import selfcare  # noqa: E402  (health checks, self-test, self-update)
 import steamaccount  # noqa: E402  (who's signed in, hours played, optional Web API)
+import travel  # noqa: E402  (ready-to-travel check, the Always-awake switch)
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
@@ -230,7 +232,9 @@ class Bridge:
         self.network = True
         self._care_lock = threading.Lock()
         self._cache = ([], 0.0)
-        self._sessions = {}          # token -> expiry (unix seconds)
+        self._sessions = {}          # sha256(token) -> expiry (unix seconds); the token itself is never kept
+        self.sessions_path = None    # set by main(): sessions then survive restarts and self-updates
+        self.last_launch = 0.0
         self._fails = {}             # client ip -> (wrong_count, locked_until)
         self._lock = threading.Lock()
 
@@ -246,18 +250,57 @@ class Bridge:
         for ip in [ip for ip, (_, until) in self._fails.items() if until and until < now - 3600]:
             del self._fails[ip]
 
+    @staticmethod
+    def _key(token):
+        return hashlib.sha256(str(token).encode("utf-8")).hexdigest()
+
+    def _pin_tag(self):
+        return hashlib.sha256(("pin:" + self.pin).encode("utf-8")).hexdigest()[:16]
+
+    def load_sessions(self, path):
+        """Pick up the sessions an earlier run saved - unless the PIN has changed since, which signs everyone out."""
+        self.sessions_path = path
+        try:
+            with open(path, encoding="utf-8") as f:
+                d = json.load(f)
+            if d.get("pin") == self._pin_tag() and isinstance(d.get("sessions"), dict):
+                now = time.time()
+                with self._lock:
+                    self._sessions.update({k: float(v) for k, v in d["sessions"].items()
+                                           if isinstance(k, str) and len(k) == 64 and isinstance(v, (int, float)) and v > now})
+        except Exception:  # noqa: BLE001 - no file, junk in it: everyone just enters the PIN again
+            pass
+
+    def _save_sessions(self):
+        """Called under the lock. Hashes only, in the owner's profile, 0600."""
+        if not self.sessions_path:
+            return
+        try:
+            os.makedirs(os.path.dirname(self.sessions_path), exist_ok=True)
+            tmp = self.sessions_path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump({"pin": self._pin_tag(), "sessions": self._sessions}, f)
+            os.replace(tmp, self.sessions_path)
+            try:
+                os.chmod(self.sessions_path, 0o600)
+            except OSError:
+                pass
+        except OSError:
+            pass
+
     def session_ok(self, token):
         if not self.gated:
             return True
         if not token:
             return False
+        key = self._key(token)
         with self._lock:
             self._prune(time.time())
-            exp = self._sessions.get(token)
+            exp = self._sessions.get(key)
             if exp is None:
                 return False
             if exp < time.time():
-                del self._sessions[token]
+                del self._sessions[key]
                 return False
             return True
 
@@ -272,7 +315,8 @@ class Bridge:
             if hmac.compare_digest(str(given or "").encode("utf-8"), self.pin.encode("utf-8")):
                 self._fails.pop(ip, None)
                 tok = secrets.token_urlsafe(32)
-                self._sessions[tok] = now + SESSION_DAYS * 86400
+                self._sessions[self._key(tok)] = now + SESSION_DAYS * 86400
+                self._save_sessions()
                 return "ok", tok
             count += 1
             if count >= FREE_TRIES:
@@ -307,7 +351,8 @@ class Bridge:
 
     def end_session(self, token):
         with self._lock:
-            self._sessions.pop(token, None)
+            self._sessions.pop(self._key(token), None)
+            self._save_sessions()
 
     def games(self, max_age=15.0):
         cached, when = self._cache
@@ -342,14 +387,39 @@ class Bridge:
             checks.append(selfcare._c("steam web api", not err, "library and avatar fetched" if not err else "key set but the call failed: " + err, fail=False))
         return checks
 
+    def awake(self, fresh=False):
+        with self._care_lock:
+            a = getattr(self, "_awake", None)
+            if fresh or not a or time.time() - a[1] > 30:
+                a = (travel.awake_state(), time.time())
+                self._awake = a
+            return a[0]
+
+    def set_awake(self, mode):
+        state = travel.set_awake(mode)
+        with self._care_lock:
+            self._awake = (state, time.time())
+            self._preflight = None
+        return state
+
+    def preflight(self, fresh=False):
+        with self._care_lock:
+            p = getattr(self, "_preflight", None)
+            if fresh or not p or time.time() - p[1] > 60:
+                p = (travel.preflight(self, network=self.network), time.time())
+                self._preflight = p
+            return p[0]
+
     def host(self):
+        awake = self.awake()
         return {
             "name": self.host_name,
             "platform": platform.system(),
             "steam_path": self.steam_root,
             "libraries": library_folders(self.steam_root) if self.steam_root else [],
             "games": len(self.games()),
-            "awake": True,
+            "awake": awake["never_sleeps"],
+            "awake_state": awake,
             "time": int(time.time()),
         }
 
@@ -437,6 +507,9 @@ def make_handler(bridge):
                 return self._json(200, bridge.host())
             if path == "/api/health":
                 return self._json(200, bridge.health())
+            if path == "/api/preflight":
+                fresh = parse_qs(urlparse(self.path).query).get("fresh", [""])[0] == "1"
+                return self._json(200, bridge.preflight(fresh=fresh))
             if path == "/api/version":
                 return self._json(200, {"version": selfcare.VERSION, "sha": (selfcare.local_sha() or "")[:7], "update": bridge.update_info()})
             if path == "/":
@@ -489,6 +562,14 @@ def make_handler(bridge):
 
             if not self._authed():
                 return self._json(401, {"error": "pin required"})
+            if path == "/api/awake":
+                body = self._read_json()
+                mode = body.get("mode") if isinstance(body, dict) else None
+                if mode not in ("awake", "sleep"):
+                    return self._json(400, {"error": "mode must be awake or sleep"})
+                state = bridge.set_awake(mode)
+                self.log_message("sleep mode set to %s (holding awake: %s)", mode, state["holding"])
+                return self._json(200, dict(state, ok=True))
             if path != "/api/launch":
                 return self._json(404, {"error": "not found"})
             if bridge.token and not hmac.compare_digest(self.headers.get("X-Apollo-Token", ""), bridge.token):
@@ -512,6 +593,7 @@ def make_handler(bridge):
                 return self._json(404, {"error": "not installed on this host"})
             try:
                 launch_appid(appid)
+                bridge.last_launch = time.time()
             except Exception as e:  # noqa: BLE001
                 self.log_message("launch of %d failed: %s", appid, e)
                 return self._json(500, {"error": "the host couldn't start it — check the bridge window"})
@@ -572,6 +654,38 @@ def restart(new_sha):
     os.execve(sys.executable, argv, env)
 
 
+UPDATE_EVERY = 6 * 3600             # while running, look for a new version this often (startup checks too)
+QUIET_AFTER_LAUNCH = 30 * 60        # never restart under someone who just pressed Stream
+
+
+def auto_update_once(bridge):
+    """Apply an available update if nobody launched a game recently. Returns the new commit to restart into, else None."""
+    if time.time() - bridge.last_launch < QUIET_AFTER_LAUNCH:
+        return None
+    u = selfcare.update_status()
+    if not u.get("available") or os.environ.get("APOLLO_RESTARTED_FOR") == (u.get("remote") or ""):
+        return None
+    print("%s  update available - applying..." % time.strftime("%H:%M:%S"))
+    ok, msg, before, after = selfcare.apply_update()
+    print(msg)
+    return after if ok and after and after != before else None
+
+
+def auto_update_loop(bridge, srv, state, every=UPDATE_EVERY):
+    """The startup check only helps a PC that restarts. This one keeps a PC that runs for months current."""
+    while True:
+        time.sleep(every)
+        try:
+            new = auto_update_once(bridge)
+        except Exception as e:  # noqa: BLE001 - an update problem must never take the bridge down
+            print("auto-update: %s" % e)
+            continue
+        if new:
+            state["restart_to"] = new
+            srv.shutdown()                                   # main thread closes the port, then restarts into the new code
+            return
+
+
 def setup_logging(path):
     """Send everything the bridge prints to a file. Essential under pythonw.exe (the hidden logon task), where
     sys.stdout/sys.stderr are None and http.server would crash the first time it tried to log a request."""
@@ -615,6 +729,9 @@ def main():
     ap.add_argument("--update", action="store_true", help="update this copy from GitHub (git pull, or a verified zip), run the tests, then exit")
     ap.add_argument("--auto-update", action="store_true", default=os.environ.get("APOLLO_AUTO_UPDATE") == "1",
                     help="at startup, apply any available update and restart (or APOLLO_AUTO_UPDATE=1)")
+    ap.add_argument("--preflight", action="store_true", help="ready to travel? check sleep, Tailscale, restarts, Steam sign-in; exit 1 if not ready")
+    ap.add_argument("--set-awake", choices=["on", "off"], default=None,
+                    help="on = the bridge keeps this PC from sleeping whenever it runs; off = let it sleep. Saved, then exit")
     ap.add_argument("--log", default="", help="write output to this file (used by the Windows logon task, which runs hidden)")
     ap.add_argument("--steam-key", default="",
                     help="Steam Web API key for this run only (steamcommunity.com/dev/apikey). To keep it: --set-steam-key")
@@ -638,6 +755,10 @@ def main():
     if args.forget_steam_key:
         steamaccount.save_config(steam_key="")
         print("Steam Web API key removed."); sys.exit(0)
+    if args.set_awake is not None:
+        travel.set_awake("awake" if args.set_awake == "on" else "sleep", apply_now=False)
+        print("Saved: the bridge will %s." % ("keep this PC awake whenever it runs" if args.set_awake == "on" else "let this PC sleep"))
+        sys.exit(0)
 
 
     steam = args.steam or (default_steam_paths() or [None])[0]
@@ -662,6 +783,10 @@ def main():
         rep["status"] = selfcare._rollup(rep["checks"])
         selfcare.print_report(rep)
         sys.exit(0 if rep["status"] != "fail" else 1)
+    if args.preflight:
+        rep = travel.preflight(bridge, network=not args.no_network)
+        travel.print_preflight(rep)
+        sys.exit(0 if rep["ready"] else 1)
     if args.check_update:
         if args.no_network:
             print("--no-network given; not checking"); sys.exit(0)
@@ -712,6 +837,8 @@ def main():
         print("port %d is %s" % (args.port, busy["detail"]))
         print("stop the other one, or start this one with --port 8778")
         sys.exit(1)
+    bridge.load_sessions(os.path.join(os.path.dirname(steamaccount.CONFIG_PATH), "sessions.json"))   # a restart doesn't sign every screen out
+    travel.resume_awake()
     srv = Server((args.bind, args.port), make_handler(bridge))
     for addr in bridge_addresses(args.port):
         print("Apollo bridge on %s" % addr)
@@ -728,11 +855,19 @@ def main():
             print("Tailscale: %s" % ts["detail"])
     except Exception:  # noqa: BLE001 - purely informational
         pass
+    print("Sleep: %s" % ("the bridge keeps this PC awake" if travel.HOLD.held else "this PC follows its own sleep settings (Sleep & wake tab to change)"))
     print("Open that address from any device on your network or tailnet. Ctrl-C to stop.")
+    state = {}
+    if args.auto_update and not args.no_network:
+        threading.Thread(target=auto_update_loop, args=(bridge, srv, state), daemon=True, name="auto-update").start()
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
         pass
+    srv.server_close()
+    if state.get("restart_to"):
+        print("restarting with the new version...")
+        restart(state["restart_to"])
 
 
 if __name__ == "__main__":

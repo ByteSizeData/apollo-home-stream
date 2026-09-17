@@ -18,7 +18,7 @@ import urllib.error
 import urllib.request
 import zipfile
 
-VERSION = "0.5.0"
+VERSION = "0.6.0"
 REPO = "ByteSizeData/apollo-home-stream"          # the ONLY place updates are ever fetched from
 BRANCH = "main"
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -26,6 +26,7 @@ ROOT = os.path.dirname(HERE)
 SHA_FILE = os.path.join(ROOT, ".apollo-sha")        # written by zip updates (git installs use .git)
 APOLLO_WEB_UI_PORT = 47990                          # Apollo / Sunshine settings page
 NET_TIMEOUT = 4
+NO_WINDOW = {"creationflags": 0x08000000} if os.name == "nt" else {}      # under pythonw.exe a child program must never flash a console
 ALLOWED_HOSTS = ("github.com", "api.github.com", "codeload.github.com", "objects.githubusercontent.com")
 
 
@@ -166,7 +167,7 @@ def check_tailscale():
     exe = shutil.which("tailscale") or (r"C:\Program Files\Tailscale\tailscale.exe" if os.name == "nt" else "/Applications/Tailscale.app/Contents/MacOS/Tailscale")
     if exe and os.path.exists(exe):
         try:
-            out = subprocess.run([exe, "status", "--json"], capture_output=True, text=True, timeout=5).stdout
+            out = subprocess.run([exe, "status", "--json"], capture_output=True, text=True, timeout=5, **NO_WINDOW).stdout
             st = json.loads(out or "{}")
             state = st.get("BackendState", "?")
             me = st.get("Self") or {}
@@ -229,7 +230,7 @@ def run_unit_tests():
     if not os.path.isdir(tests):
         return {"name": "unit tests", "status": "warn", "detail": "tests/ folder not present in this copy"}
     try:
-        r = subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", tests], capture_output=True, text=True, timeout=300)
+        r = subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", tests], capture_output=True, text=True, timeout=300, **NO_WINDOW)
     except subprocess.TimeoutExpired:
         return {"name": "unit tests", "status": "fail", "detail": "tests did not finish within 5 minutes"}
     tail = (r.stderr or r.stdout).strip().splitlines()
@@ -256,7 +257,7 @@ def print_report(h):
 
 # ----------------------------------------------------------------------------- update
 def _git(*args, timeout=120):
-    return subprocess.run(["git", "-C", ROOT] + list(args), capture_output=True, text=True, timeout=timeout)
+    return subprocess.run(["git", "-C", ROOT] + list(args), capture_output=True, text=True, timeout=timeout, **NO_WINDOW)
 
 
 def is_git_checkout():

@@ -160,6 +160,25 @@ h2.sec{font-family:"Archivo",sans-serif; font-stretch:116%; font-weight:700; fon
 .unlock .pin input{width:52px; height:60px; text-align:center; font-family:"IBM Plex Mono",monospace; font-size:26px; font-weight:600; border:1px solid var(--line); border-radius:10px; background:var(--panel-2); color:var(--text); outline:none; caret-color:transparent}
 .unlock .pin input:focus{border-color:var(--accent); box-shadow:0 0 0 3px var(--glow)}
 .unlock .msg{min-height:18px; font-size:13px; color:var(--crit)}
+.travel{border:1px solid var(--line); background:var(--panel); border-radius:12px; padding:18px 20px; margin:22px 0 4px}
+.travel .head{display:flex; align-items:center; gap:12px; flex-wrap:wrap}
+.travel .big{width:14px; height:14px; border-radius:50%; background:var(--dim); flex:none}
+.travel .big.ok{background:var(--ok); box-shadow:0 0 0 4px color-mix(in srgb,var(--ok) 20%,transparent)}
+.travel .big.warn{background:var(--warn); box-shadow:0 0 0 4px color-mix(in srgb,var(--warn) 20%,transparent)}
+.travel .big.fail{background:var(--crit); box-shadow:0 0 0 4px color-mix(in srgb,var(--crit) 20%,transparent)}
+.travel h3{margin:0; font-size:16px; font-weight:700; flex:1; min-width:200px}
+.travel p{margin:10px 0 0; color:var(--muted); font-size:13.5px}
+.travel ul{list-style:none; margin:14px 0 0; padding:0; display:grid; gap:9px}
+.travel li{display:grid; grid-template-columns:10px 1fr; gap:10px; font-size:13.5px; color:var(--muted)}
+.travel li i{width:8px; height:8px; border-radius:50%; margin-top:6px; background:var(--dim)}
+.travel li i.ok{background:var(--ok)} .travel li i.warn{background:var(--warn)} .travel li i.fail{background:var(--crit)}
+.travel li b{color:var(--text); font-weight:600}
+.travel li .fix{display:block; color:var(--text); font-size:12.5px; margin-top:2px}
+.travel .applied{font-size:12.5px; color:var(--ok); margin-top:12px}
+.oneline{border:1px solid color-mix(in srgb,var(--accent) 45%,var(--line)); background:color-mix(in srgb,var(--accent) 7%,transparent); border-radius:12px; padding:16px 18px; margin:0 0 18px}
+.oneline h3{margin:0 0 6px; font-size:15px; font-weight:700}
+.oneline p{margin:0 0 10px; color:var(--muted); font-size:13.5px}
+.oneline p:last-child{margin:10px 0 0}
 .connect{border:1px solid color-mix(in srgb,var(--accent) 45%,var(--line)); background:color-mix(in srgb,var(--accent) 7%,transparent); border-radius:12px; padding:16px 18px; margin:0 0 26px; display:flex; flex-direction:column; gap:10px}
 .connect h3{margin:0; font-size:15px; font-weight:700}
 .connect p{margin:0; color:var(--muted); font-size:13px}
@@ -278,15 +297,14 @@ footer .in{max-width:1180px; margin:0 auto; display:flex; gap:16px; flex-wrap:wr
     <p>What you see below is a <b>sample</b>. A website can't see your gaming PC, your Steam sign-in or your library —
     only the small bridge program running <b>on that PC</b> can. Do this once, on the gaming PC:</p>
     <ol>
-      <li>Get the code <span>(needs Python and git installed)</span>
-        <div class="cmd"><code id="dc1">git clone https://github.com/ByteSizeData/apollo-home-stream</code><button type="button" data-copy="dc1">Copy</button></div></li>
-      <li>Start the bridge <span>— it prints the address to open</span>
-        <div class="cmd"><code id="dc2">cd apollo-home-stream &amp;&amp; python bridge/apollo_bridge.py</code><button type="button" data-copy="dc2">Copy</button></div></li>
-      <li>Open that address from any screen in the house <span>— it looks like <b>http://your-pc-name:8777</b> — and enter PIN <b>2550</b>.
-        Your Steam name appears in the top-right corner and this page fills with your real games.</span></li>
+      <li>Open <b>PowerShell</b> on the gaming PC and paste this one line <span>— it installs everything (Apollo, Tailscale, the bridge), asks Windows for permission once, and sets it to start by itself</span>
+        <div class="cmd"><code id="dc1">irm https://bytesizedata.github.io/apollo-home-stream/install.ps1 | iex</code><button type="button" data-copy="dc1">Copy</button></div></li>
+      <li>It finishes by printing two addresses <span>— one for home, one that works anywhere (Tailscale).</span></li>
+      <li>Open the <b>anywhere</b> address from any screen and enter PIN <b>2550</b>.
+        <span>Your Steam name appears in the top-right corner and this page fills with your real games.</span></li>
     </ol>
     <p style="margin:14px 0 0">Want it synced with Steam itself — what you played last on any device, current stats, games you own but haven't installed?
-    Run <code class="k">python bridge/apollo_bridge.py --set-steam-key YOURKEY</code> once (key from steamcommunity.com/dev/apikey). Details on the <b>Install</b> tab.</p>
+    Add your key to the same line: <code class="k">… -SteamKey YOURKEY</code> (key from steamcommunity.com/dev/apikey). Details on the <b>Install</b> tab.</p>
   </div>
 
   <div class="unlock" id="unlock" hidden>
@@ -347,7 +365,14 @@ footer .in{max-width:1180px; margin:0 auto; display:flex; gap:16px; flex-wrap:wr
 
   <div class="block">
     <div class="block-head"><span class="stepnum">1</span><h2 class="sec">On your gaming PC</h2></div>
-    <p>The machine doing the work: it runs the game and sends the picture out. Two installs, both one line in Terminal or PowerShell.</p>
+    <p>The machine doing the work: it runs the game and sends the picture out.</p>
+    <div class="oneline">
+      <h3>One line sets up the whole PC</h3>
+      <p>Open <b>PowerShell</b>, paste, press Enter, and say Yes when Windows asks. It installs Apollo, Tailscale and the bridge; opens the firewall to your home network and your Tailscale devices only; makes everything start with Windows, restart itself and update itself; keeps Tailscale connected even when nobody is signed in; and stops the PC going to sleep. Run it again any time — it only fixes what isn't right.</p>
+      <div class="cmd"><code id="cmdAll">irm https://bytesizedata.github.io/apollo-home-stream/install.ps1 | iex</code><button type="button" data-copy="cmdAll">Copy</button></div>
+      <p>When Tailscale opens its sign-in page, use the <b>same account</b> you'll use on your phone and laptop. At the end it prints the address to use everywhere and a short list of things only you can do. To check on it later: add <code class="k">-Status</code>.</p>
+    </div>
+    <p style="margin-top:0">Prefer to do it by hand? These are the two installs that line does for you:</p>
     <div class="cards">
       <div class="card">
         <h3><span class="ic">🖥</span> Apollo</h3>
@@ -358,7 +383,7 @@ footer .in{max-width:1180px; margin:0 auto; display:flex; gap:16px; flex-wrap:wr
       </div>
       <div class="card" style="border-color:color-mix(in srgb,var(--accent) 45%,var(--line))">
         <h3><span class="ic">🔒</span> Tailscale <small style="font-weight:400; color:var(--accent); font-size:11px; margin-left:4px">for the road</small></h3>
-        <p>Sign in with the same account you'll use on your phone and laptop. Then allow <code class="k">UDP 41641</code> through Windows Firewall so it connects directly instead of through a slow relay.</p>
+        <p>Sign in with the same account you'll use on your phone and laptop. The one-line installer also allows <code class="k">UDP 41641</code> through Windows Firewall (direct connection instead of a slow relay) and turns on <b>Run unattended</b>, so the PC stays reachable after a restart.</p>
         <div class="cmd"><code id="cmdTs">winget install --id Tailscale.Tailscale</code><button type="button" data-copy="cmdTs">Copy</button></div>
         <a class="btn" href="https://tailscale.com/download/windows" target="_blank" rel="noopener">Windows installer ↗</a>
       </div>
@@ -428,16 +453,20 @@ footer .in{max-width:1180px; margin:0 auto; display:flex; gap:16px; flex-wrap:wr
 
   <div class="block">
     <div class="block-head"><span class="stepnum">4</span><h2 class="sec">On the road</h2></div>
-    <p>If steps 1–3 used the Tailscale name, there is nothing more to set up. Three things to know:</p>
+    <p>If steps 1–3 used the Tailscale name, there is nothing more to set up. Before you leave, open <b>Sleep &amp; wake</b> on your PC's page and look for a green <b>Ready to travel</b>. Four things to know:</p>
     <div class="cards">
       <div class="card">
         <h3><span class="ic">⚡</span> If it connects but looks terrible</h3>
-        <p>Tailscale couldn't open a direct path and is relaying — capped near 5–10 Mbps. Allow <code class="k">UDP 41641</code> on the PC and it goes direct. Then it's only limited by your home upload speed.</p>
+        <p>Tailscale couldn't open a direct path and is relaying — capped near 5–10 Mbps. The installer already allows <code class="k">UDP 41641</code> on the PC; if <b>Ready to travel</b> still warns about direct connections, turn on <b>UPnP</b> in your router. Then it's only limited by your home upload speed.</p>
       </div>
       <div class="card">
         <h3><span class="ic">🔌</span> Keep the PC awake</h3>
         <p>A wake-up packet can't reach the PC from a hotel. Switch to <b>Always awake</b> before you travel.</p>
         <button type="button" class="btn" id="gotoPower">Sleep &amp; wake →</button>
+      </div>
+      <div class="card">
+        <h3><span class="ic">🔁</span> If the PC restarted while you're away</h3>
+        <p>After a Windows update it signs itself back in. After a power cut it waits at the sign-in screen — open Moonlight or Artemis, pick <b>Desktop</b>, and type your Windows password right there. Everything else starts by itself within a minute.</p>
       </div>
       <div class="card">
         <h3><span class="ic">🌐</span> This website works everywhere</h3>
@@ -450,6 +479,13 @@ footer .in{max-width:1180px; margin:0 auto; display:flex; gap:16px; flex-wrap:wr
 <!-- ============ SLEEP & WAKE ============ -->
 <div class="wrap" id="viewPower" role="tabpanel" aria-labelledby="tabPower" hidden>
   <p class="lede">A streaming PC is only useful if it's awake when you reach for it. Pick how you want yours to behave — you can set it up either way, and switch whenever.</p>
+
+  <div class="travel" id="travel">
+    <div class="head"><span class="big" id="travelLamp"></span><h3 id="travelHead">Ready to travel?</h3><button type="button" class="btn" id="travelBtn" hidden>Check again</button></div>
+    <p id="travelSub">Open this page from your PC's own address and it checks everything that could leave the PC unreachable while you're away: sleep, Tailscale, a Windows restart waiting to happen, Steam's saved sign-in.</p>
+    <ul id="travelRows"></ul>
+    <div class="applied" id="travelApplied" hidden></div>
+  </div>
 
   <div class="modes">
     <button class="mode" id="modeSleep" type="button" aria-pressed="true">
@@ -575,7 +611,7 @@ function loadLive(){
     if(!GAMES.some(function(g){return g.id===S.last})) S.last=GAMES[0].id;
     $("#demoBanner").hidden=LIVE;
     var cb=$("#conn"); cb.hidden=false; cb.innerHTML='<span class="eyebrow">Connections</span><span class="c" style="color:var(--dim)">checking...</span>';
-    renderGames(); renderResume(); loadHealth(); loadOwned();
+    renderGames(); renderResume(); loadHealth(); loadOwned(); loadTravel(false);
     var want=new URLSearchParams(location.search).get("play");                 // handed over from the synced site: stream this one now
     if(want){ history.replaceState(null,"",location.pathname); var g=GAMES.filter(function(x){return String(x.appid)===String(want)})[0];
       if(g) play(g.id); else fetch("/api/account",{cache:"no-store"}).then(function(r){return r.ok?r.json():null}).then(function(a){ var o=a&&a.also_owned&&a.also_owned.filter(function(x){return String(x.appid)===String(want)})[0]; if(o) installGame(o); }); }
@@ -718,7 +754,7 @@ function loadHealth(){
     });
     if(v && v.update && v.update.available){
       var u=document.createElement("span"); u.className="upd";
-      u.innerHTML="Update available · run <code>python bridge/apollo_bridge.py --update</code>";
+      u.textContent="Update available · it installs itself within a few hours";
       box.appendChild(u);
     } else if(v){
       var ver=document.createElement("span"); ver.className="c"; ver.style.marginLeft="auto"; ver.textContent="v"+v.version+(v.sha?" · "+v.sha:"")+(v.update&&v.update.available===false?" · up to date":"");
@@ -855,6 +891,48 @@ function powerSteps(list,host){
     li.appendChild(wrap); host.appendChild(li);
   });
 }
+/* ---- ready to travel + the real switch (only when this page is served by the PC itself) ---- */
+function travelRows(rep){
+  var ul=$("#travelRows"); ul.innerHTML="";
+  (rep.checks||[]).forEach(function(c){
+    var li=document.createElement("li"), dot=document.createElement("i"), d=document.createElement("span"), b=document.createElement("b");
+    dot.className=c.status; b.textContent=c.name.charAt(0).toUpperCase()+c.name.slice(1)+" — ";
+    d.appendChild(b); d.appendChild(document.createTextNode(c.detail));
+    if(c.fix){ var f=document.createElement("span"); f.className="fix"; f.textContent="→ "+c.fix; d.appendChild(f); }
+    li.appendChild(dot); li.appendChild(d); ul.appendChild(li);
+  });
+}
+function appliedNote(a){
+  var el=$("#travelApplied"); if(!a){ el.hidden=true; return; }
+  el.hidden=false;
+  el.textContent = a.mode==="awake" ? (a.holding ? "Always awake is on: "+HOST.name+" is being kept awake right now." : "Always awake is saved — it takes effect the next time the bridge starts.")
+                 : (a.sleep_after_min ? HOST.name+" follows its own settings: sleeps after "+a.sleep_after_min+" min idle." : HOST.name+" follows its own sleep settings.");
+  el.style.color = a.never_sleeps ? "var(--ok)" : "var(--muted)";
+}
+function loadTravel(fresh){
+  if(!LIVE){
+    var sub=$("#travelSub");
+    if(BRIDGE){ sub.innerHTML=""; sub.appendChild(document.createTextNode("This check — and the switches below — only work from your PC's own page. "));
+      var a=document.createElement("a"); a.href=BRIDGE+"/#power"; a.textContent="Open it on "+BRIDGE.replace(/^https?:\/\//,"")+" →"; a.style.color="var(--accent)"; sub.appendChild(a); }
+    return;
+  }
+  $("#travelHead").textContent="Checking "+HOST.name+"…"; $("#travelLamp").className="big"; $("#travelBtn").hidden=true;
+  fetch("/api/preflight"+(fresh?"?fresh=1":""),{cache:"no-store"}).then(function(r){ if(r.status===401){ location.replace("/pin"); throw 0; } return r.ok?r.json():null; })
+    .then(function(rep){
+      if(!rep) throw 0;
+      $("#travelLamp").className="big "+rep.status; $("#travelHead").textContent=rep.headline; $("#travelSub").hidden=true; $("#travelBtn").hidden=false;
+      travelRows(rep); appliedNote(rep.awake);
+      if(rep.awake && rep.awake.mode && S.mode!==rep.awake.mode){ S.mode=rep.awake.mode; save(); renderPower(); }       // the PC's saved choice is the truth
+    }).catch(function(){ $("#travelHead").textContent="Couldn't check "+HOST.name; $("#travelBtn").hidden=false; });
+}
+function setMode(mode){
+  S.mode=mode; save(); renderPower();
+  if(!LIVE) return;                                                                 // on the public site this is a guide, not a switch
+  fetch("/api/awake",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({mode:mode})})
+    .then(function(r){ if(r.status===401){ location.replace("/pin"); throw 0; } return r.ok?r.json():null; })
+    .then(function(a){ if(a){ appliedNote(a); $("#hostText").textContent=HOST.name+(a.never_sleeps?" · always awake":" · connected"); } loadTravel(true); })
+    .catch(function(){ var el=$("#travelApplied"); el.hidden=false; el.style.color="var(--crit)"; el.textContent="Couldn't reach "+HOST.name+" - nothing was changed."; });
+}
 function renderPower(){
   var m=POWER[S.mode]||POWER.sleep;
   $("#modeSleep").setAttribute("aria-pressed",String(S.mode!=="awake"));
@@ -958,14 +1036,15 @@ $("#tabPlay").addEventListener("click",function(){ setTab("play") });
   $("#bridgeAddr").addEventListener("keydown",function(e){ if(e.key==="Enter"){ e.preventDefault(); $("#bridgeSave").click(); } });
 })();
 $("#tabInstall").addEventListener("click",function(){ setTab("install") });
-$("#tabPower").addEventListener("click",function(){ setTab("power") });
+$("#tabPower").addEventListener("click",function(){ setTab("power"); loadTravel(false); });
 $("#lockBtn").addEventListener("click",function(){
   if(SYNCED) return;                                                          // synced mode has its own handler (forget the remembered PIN)
   fetch("/api/logout",{method:"POST"}).catch(function(){}).then(function(){ location.replace("/pin"); });
 });
-var gp=$("#gotoPower"); if(gp) gp.addEventListener("click",function(){ setTab("power") });
-$("#modeSleep").addEventListener("click",function(){ S.mode="sleep"; save(); renderPower(); });
-$("#modeAwake").addEventListener("click",function(){ S.mode="awake"; save(); renderPower(); });
+var gp=$("#gotoPower"); if(gp) gp.addEventListener("click",function(){ setTab("power"); loadTravel(false); });
+$("#modeSleep").addEventListener("click",function(){ setMode("sleep"); });
+$("#modeAwake").addEventListener("click",function(){ setMode("awake"); });
+$("#travelBtn").addEventListener("click",function(){ loadTravel(true); });
 $("#resumeBtn").addEventListener("click",function(){ if(SYNCED) streamViaBridge(game(S.last)); else play(S.last); });
 $("#stageClose").addEventListener("click",stop);
 $("#launch").addEventListener("click",function(e){ if(e.target===this) stop() });
@@ -976,7 +1055,7 @@ document.addEventListener("keydown",function(e){
     if(gm) play(gm.id);
   }
 });
-$("#hostText").textContent=HOST.name+" — awake";
+if(location.hash==="#power"){ S.tab="power"; history.replaceState(null,"",location.pathname+location.search); }   // handed over from the public site's Sleep & wake tab
 
 renderGames(); renderResume(); renderPower(); setTab(S.tab); loadLive();
 })();

@@ -12,19 +12,50 @@ A small web page and a tiny bridge service for [Apollo](https://github.com/Class
   starts the game on the gaming PC. Then you connect with Artemis or Moonlight to see it.
 - **Install** — three installs: Apollo on the PC, the right client for each device, and
   **Tailscale on both** (that's what makes it work from the road), plus pairing and its permissions trap.
-- **Sleep & wake** — set the PC to sleep-and-wake-on-demand or always-awake, with the exact
-  Windows and Mac commands.
+- **Sleep & wake** — a **Ready to travel?** check (will this PC still be reachable next week?)
+  and a real Always-awake switch, plus the exact Windows and Mac commands for both modes.
 
-The Install and Sleep & wake pages are plain documentation. The Play page becomes real when
-the bridge is running.
+The Install page is documentation. Play and Sleep & wake become real when the page is opened
+from the bridge on your PC.
 
 **Live site:** https://bytesizedata.github.io/apollo-home-stream/ — the guide plus a sample library.
 Your real games only appear when you open the page *from the bridge on your gaming PC* (below),
 because the bridge is what reads your Steam folder.
 
-## Run it
+## Set up the gaming PC (one line)
 
-On the **gaming PC** (the machine with Steam and Apollo on it):
+On the **gaming PC** (Windows 10/11, the machine with Steam on it), open PowerShell and paste:
+
+```powershell
+irm https://bytesizedata.github.io/apollo-home-stream/install.ps1 | iex
+```
+
+Say Yes when Windows asks for permission (once). It:
+
+- installs what's missing — Python, Git, **Apollo**, **Tailscale** — and downloads this project;
+- opens the firewall for the bridge to **your home network and your Tailscale devices only**
+  (works even when Windows labels your Wi-Fi "Public"), plus UDP 41641 so Tailscale connects directly;
+- registers a startup task that runs the bridge hidden, **re-checks it every minute**, and lets it
+  **update itself** (at startup and every few hours while running — never right after you press Stream);
+- opens Tailscale's sign-in page if needed, then makes Tailscale **run unattended** (stays connected at the
+  Windows sign-in screen) and update itself;
+- sets the PC to **never sleep** while plugged in (`-KeepSleep` to opt out) and Apollo's service to
+  restart itself;
+- finishes with the two addresses to use, a **Ready to travel?** report, and the short list of things
+  only you can do (BIOS power-on after a power cut, disabling Tailscale key expiry, Steam "Remember me").
+
+It is safe to run again at any time — it only fixes what isn't right. Options go after the script:
+
+```powershell
+& ([scriptblock]::Create((irm https://bytesizedata.github.io/apollo-home-stream/install.ps1))) -SteamKey YOURKEY
+```
+
+`-Status` (read-only report) · `-DryRun` (show every step, change nothing) · `-SteamKey KEY` · `-Pin 4821` ·
+`-NoApollo` · `-NoTailscale` · `-KeepSleep` · `-AutoLogon` (sign back in by itself after a power cut; you type
+your password into Microsoft's own Autologon tool) · `-Uninstall`.
+Every push is tested by really installing, checking and uninstalling it on a Windows machine in CI.
+
+### Or run it by hand
 
 ```bash
 python bridge/apollo_bridge.py
@@ -62,7 +93,11 @@ python.org (tick *Add to PATH*), or `winget install Python.Python.3.12`.
 --self-test            check Steam, Apollo, ports, network, then run the tests, and exit
 --check-update         say whether a newer version is on GitHub
 --update               fetch the newest version (git pull, or a verified zip), run the tests, roll back on failure
---auto-update          apply updates at startup and restart (or APOLLO_AUTO_UPDATE=1)
+--auto-update          apply updates at startup and every few hours, then restart (or APOLLO_AUTO_UPDATE=1)
+--preflight            ready to travel? sleep, Tailscale (connected, unattended, sign-in expiry), pending
+                       Windows restart, startup task, Apollo service, Steam sign-in; exit 1 if not ready
+--set-awake on|off     on = the bridge keeps this PC awake whenever it runs (same switch as the Sleep & wake tab)
+--log FILE             write output to a file (the startup task runs hidden and uses this)
 ```
 
 ### What the bridge does
@@ -163,14 +198,29 @@ Steam's cover-art CDN and GitHub are reachable — then runs the whole test suit
 work, `warn` rows are optional or explained, `FAIL` rows need fixing. The Play page shows
 the same connections as a row of dots under the Continue card.
 
+**Ready to travel?** The Sleep & wake tab (opened from the PC's own address) and
+`python bridge/apollo_bridge.py --preflight` answer one question: *will this PC still be reachable
+next week?* Red rows stop a trip: the PC goes to sleep, Tailscale isn't connected or doesn't run
+unattended, Tailscale's sign-in is about to expire, Apollo's service is down, Steam would ask for a
+password after a restart, the startup task is missing. Yellow rows are worth a look: a Windows restart
+is waiting (do it now, not next week), a router that forces slow relayed connections, your phone's
+Tailscale sign-in running out, no automatic sign-in after a power cut. Every row says how to fix it.
+
+**If the PC restarts while you're away.** After a Windows update it signs itself back in and the
+bridge returns within a minute. After a power cut (with the BIOS set to power on when mains returns) it
+waits at the sign-in screen - Tailscale and Apollo are already up, so open Moonlight/Artemis, choose
+**Desktop**, and type your Windows password there. `-AutoLogon` on the installer removes even that step.
+
 **Self-update.** The bridge checks GitHub at startup and prints a one-liner if there's a
 newer version. `--update` applies it: a git checkout gets `git pull`, a plain download gets
 the newest zip of this repo — verified to be this project, backed up first, tests run
-afterwards, and rolled back automatically if they fail. `--auto-update` does that on every
-start and restarts itself. Updates only ever come from `github.com/ByteSizeData/apollo-home-stream`.
+afterwards, and rolled back automatically if they fail. `--auto-update` (what the installer sets up)
+does that on every start **and every six hours while running**, then restarts itself - never within
+30 minutes of a game launch, and screens stay signed in across the restart. Updates only ever come from `github.com/ByteSizeData/apollo-home-stream`.
 
 **Continuous tests.** Every push runs the test suite on Linux and Windows across two Python
-versions (see the *tests* badge / Actions tab), and every change to `web/` republishes the
+versions, and **really installs, checks and uninstalls** the one-line installer on a Windows machine
+(see the *tests* badge / Actions tab), and every change to `web/` republishes the
 live site automatically. Nothing to copy by hand.
 
 ## Development
@@ -186,10 +236,12 @@ browser and it shows a sample library; served by the bridge it shows yours.
 
 ## Status
 
-The Steam parsing is unit-tested against real-format fixtures and the API is
-integration-tested against a fake library. It has **not** yet been run against a real
-Windows gaming PC with Apollo installed — expect to tweak paths or the launch call on first
-run. `--dry-run` is the place to start.
+The Steam parsing is unit-tested against real-format fixtures, the API is integration-tested
+against a fake library, and the installer is exercised end to end on GitHub's Windows machines
+(without Apollo, Tailscale or Steam, which can't be installed there). What has **not** happened yet
+is a run on a real gaming PC with Apollo, Tailscale and Steam signed in — the Tailscale sign-in
+flow, Apollo's service name and the game launch itself are the parts to watch on first run.
+`-Status` on the installer and `--preflight` on the bridge are the places to look.
 
 ## Not affiliated
 

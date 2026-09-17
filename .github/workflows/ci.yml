@@ -31,7 +31,7 @@ jobs:
         run: python bridge/apollo_bridge.py --self-test --no-network --allow-missing-steam
 
   installer:
-    name: Windows installer (lint + dry run)
+    name: Windows installer (lint, dry run, real install)
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -50,6 +50,44 @@ jobs:
         shell: powershell
         run: |
           powershell -NoProfile -ExecutionPolicy Bypass -File install/windows.ps1 -DryRun -Uninstall
+      - name: Real install on a real Windows machine, -Status, then -Uninstall
+        shell: powershell
+        run: |
+          $dir = Join-Path $env:RUNNER_TEMP "ApolloHomeStream"
+          powershell -NoProfile -ExecutionPolicy Bypass -File install/windows.ps1 -NoApollo -NoTailscale -InstallDir $dir -RepoUrl $env:GITHUB_WORKSPACE -Port 8795
+          $code = $LASTEXITCODE
+          Write-Host "---- installer exit code: $code"
+          Get-Content (Join-Path $dir "bridge.log") -ErrorAction SilentlyContinue | Select-Object -Last 30
+          $fail = @()
+          if ($code -ne 0) { $fail += "installer exit code $code" }
+          $t = Get-ScheduledTask -TaskName "Apollo Home Stream bridge" -ErrorAction SilentlyContinue
+          if (-not $t) { $fail += "scheduled task missing" } else {
+            if (@($t.Triggers).Count -ne 2) { $fail += "expected 2 triggers (sign-in + watchdog), got $(@($t.Triggers).Count)" }
+            if ("$($t.Settings.MultipleInstances)" -ne "IgnoreNew") { $fail += "MultipleInstances is $($t.Settings.MultipleInstances)" }
+            if ($t.Actions[0].Execute -notmatch "pythonw\.exe$") { $fail += "task runs $($t.Actions[0].Execute), not pythonw.exe" }
+            if (-not (Test-Path $t.Actions[0].Execute)) { $fail += "task points at a missing interpreter" }
+            if ($t.Actions[0].Arguments -notmatch "--auto-update" -or $t.Actions[0].Arguments -notmatch "--log") { $fail += "task arguments: $($t.Actions[0].Arguments)" }
+            Write-Host "task: $($t.Actions[0].Execute) $($t.Actions[0].Arguments)"
+          }
+          $r = Get-NetFirewallRule -DisplayName "Apollo Home Stream bridge (TCP 8795, home network + Tailscale)" -ErrorAction SilentlyContinue
+          if (-not $r) { $fail += "firewall rule missing" } else {
+            $from = ($r | Get-NetFirewallAddressFilter).RemoteAddress
+            Write-Host "firewall from: $from"
+            if ("$from" -notmatch "LocalSubnet" -or "$from" -notmatch "100\.64\.0\.0") { $fail += "firewall rule is not limited to LAN + Tailscale: $from" }
+          }
+          try { $ok = (Invoke-WebRequest http://127.0.0.1:8795/pin -UseBasicParsing -TimeoutSec 5).StatusCode -eq 200 } catch { $ok = $false }
+          if (-not $ok) { $fail += "bridge is not answering on 8795" }
+          $cfg = Join-Path $env:USERPROFILE ".apollo-home-stream\config.json"
+          if (-not (Test-Path $cfg) -or ((Get-Content $cfg -Raw) -notmatch '"awake":\s*"awake"')) { $fail += "always-awake choice was not saved" }
+          Write-Host "---- -Status"
+          powershell -NoProfile -ExecutionPolicy Bypass -File install/windows.ps1 -Status -InstallDir $dir -Port 8795
+          Write-Host "---- -Uninstall"
+          powershell -NoProfile -ExecutionPolicy Bypass -File install/windows.ps1 -Uninstall -InstallDir $dir -Port 8795
+          if (Get-ScheduledTask -TaskName "Apollo Home Stream bridge" -ErrorAction SilentlyContinue) { $fail += "uninstall left the task behind" }
+          if (Get-NetFirewallRule -DisplayName "Apollo Home Stream bridge (TCP 8795, home network + Tailscale)" -ErrorAction SilentlyContinue) { $fail += "uninstall left the firewall rule behind" }
+          Get-CimInstance Win32_Process -Filter "Name like 'python%'" | Where-Object { $_.CommandLine -match "apollo_bridge" } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+          if ($fail) { $fail | ForEach-Object { Write-Host "FAIL: $_" }; throw "real install check failed" }
+          Write-Host "real install: OK"
       - name: The bridge runs hidden without a console (pythonw) and logs to a file
         shell: pwsh
         run: |

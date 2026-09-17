@@ -73,7 +73,7 @@ class TryPin(unittest.TestCase):
 
     def test_session_expiry_and_logout(self):
         _, tok = self.b.try_pin("ip", "2550")
-        self.b._sessions[tok] = time.time() - 1
+        self.b._sessions[self.b._key(tok)] = time.time() - 1
         self.assertFalse(self.b.session_ok(tok))
         _, tok2 = self.b.try_pin("ip", "2550")
         self.b.end_session(tok2)
@@ -228,7 +228,9 @@ class HttpGate(unittest.TestCase):
     def test_pin_page_has_no_next_redirect(self):
         _, _, body = self.req("GET", "/pin")
         self.assertNotIn(b"URLSearchParams", body)       # the client never reads a redirect target…
-        self.assertIn(b"location.replace(m?'/?play='+m[1]:'/')", body)   # ...only a numeric app id may ride along, else home
+        # ...only a numeric app id may ride along, plus one fixed tab name - never anything the URL supplied verbatim
+        self.assertIn(b"location.replace((m?'/?play='+m[1]:'/')+(location.hash==='#power'?'#power':''))", body)
+        self.assertEqual(body.count(b"location.replace("), 1)
 
     def test_pin_page_never_leaks_the_pin(self):
         _, _, body = self.req("GET", "/pin")
