@@ -473,7 +473,13 @@ function Show-Status {
   $t = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
   if ($t) {
     $i = $t | Get-ScheduledTaskInfo
-    Say ("  startup task:   {0}, {1} triggers, last run {2} (result {3})" -f $t.State, @($t.Triggers).Count, $i.LastRunTime, $i.LastTaskResult)
+    $res = switch ([int64]$i.LastTaskResult) {                # Task Scheduler's numbers, in words
+      0          { "finished normally" }
+      267009     { "running" }
+      2147946720 { "already running - the every-minute check had nothing to do" }
+      default    { "code $($i.LastTaskResult)" }
+    }
+    Say ("  startup task:   {0}, {1} triggers, last check {2} ({3})" -f $t.State, @($t.Triggers).Count, $i.LastRunTime, $res)
   } else { Say "  startup task:   MISSING - run the installer again" "Red" }
   $r = Get-NetFirewallRule -DisplayName $FwBridge -ErrorAction SilentlyContinue
   if ($r) { Say "  firewall:       port $Port open to your network and Tailscale" } else { Say "  firewall:       rule missing - run the installer again" "Red" }
