@@ -208,7 +208,7 @@ if ($DryRun) {
 } else {
   $up = $false
   foreach ($i in 1..20) {
-    try { $r = Invoke-WebRequest "http://localhost:$Port/pin" -UseBasicParsing -TimeoutSec 2; if ($r.StatusCode -eq 200) { $up = $true; break } } catch { Start-Sleep -Milliseconds 750 }
+    try { $r = Invoke-WebRequest "http://127.0.0.1:$Port/pin" -UseBasicParsing -TimeoutSec 2; if ($r.StatusCode -eq 200) { $up = $true; break } } catch { Start-Sleep -Milliseconds 750 }
   }
   if ($up) { Say "   the bridge is answering on port $Port" "Green" } else { Say "   the bridge didn't answer yet - see $Log" "Yellow" }
   & $Python $Bridge --self-test --no-network --port ($Port + 1) 2>$null | ForEach-Object { Say "   $_" "DarkGray" }

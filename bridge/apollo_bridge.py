@@ -526,7 +526,24 @@ class Server(ThreadingHTTPServer):
 
     def server_bind(self):
         selfcare.exclusive_bind_options(self.socket)
-        super().server_bind()
+        # Not HTTPServer.server_bind(): it calls socket.getfqdn(), a reverse-DNS lookup that stalls for ~45 s on
+        # some Windows machines - the bridge would be deaf for most of a minute after every boot.
+        import socketserver
+        socketserver.TCPServer.server_bind(self)
+        host, port = self.server_address[:2]
+        self.server_name = host or "localhost"
+        self.server_port = port
+
+    def handle_error(self, request, client_address):
+        """A screen that gave up waiting (closed tab, timeout, Wi-Fi drop) is not an error worth a traceback."""
+        exc = sys.exc_info()[1]
+        if isinstance(exc, (ConnectionError, TimeoutError, BrokenPipeError)):
+            try:
+                print("%s  client %s went away (%s)" % (time.strftime("%H:%M:%S"), client_address[0], type(exc).__name__))
+            except Exception:  # noqa: BLE001
+                pass
+            return
+        super().handle_error(request, client_address)
 
 
 def bridge_addresses(port):

@@ -9,6 +9,7 @@ import threading
 import time
 import unittest
 from http.server import ThreadingHTTPServer
+from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "bridge"))
 import apollo_bridge as ab  # noqa: E402
@@ -236,3 +237,34 @@ class HttpGate(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FastStart(unittest.TestCase):
+    """The server must not do a reverse-DNS lookup at bind time (it stalled ~45 s on Windows)."""
+
+    def test_bind_never_calls_getfqdn_and_starts_instantly(self):
+        import socket
+        bridge = ab.Bridge(None, "h", "", pin="")
+        with mock.patch.object(socket, "getfqdn", side_effect=AssertionError("getfqdn must not be called")):
+            t0 = time.time()
+            srv = ab.Server(("127.0.0.1", 0), ab.make_handler(bridge))
+            try:
+                self.assertLess(time.time() - t0, 1.0)
+                self.assertEqual(srv.server_port, srv.server_address[1])
+            finally:
+                srv.server_close()
+
+    def test_client_disconnects_are_one_line_not_a_traceback(self):
+        import io
+        bridge = ab.Bridge(None, "h", "", pin="")
+        srv = ab.Server(("127.0.0.1", 0), ab.make_handler(bridge))
+        try:
+            out, err = io.StringIO(), io.StringIO()
+            with mock.patch("sys.stdout", out), mock.patch("sys.stderr", err):
+                try:
+                    raise ConnectionAbortedError("client left")
+                except ConnectionAbortedError:
+                    srv.handle_error(None, ("10.0.0.9", 1234))
+            self.assertIn("went away", out.getvalue()); self.assertNotIn("Traceback", out.getvalue() + err.getvalue())
+        finally:
+            srv.server_close()

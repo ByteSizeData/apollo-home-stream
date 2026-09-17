@@ -56,8 +56,11 @@ jobs:
           $log = Join-Path $env:RUNNER_TEMP "bridge.log"
           $pyw = Join-Path (Split-Path (Get-Command python).Source) "pythonw.exe"
           $p = Start-Process $pyw -ArgumentList @("bridge/apollo_bridge.py","--steam","C:\nonexistent","--port","8791","--no-network","--log",$log) -PassThru
-          $ok = $false
-          foreach ($i in 1..30) { try { $r = Invoke-WebRequest http://localhost:8791/pin -UseBasicParsing -TimeoutSec 2; if ($r.StatusCode -eq 200) { $ok = $true; break } } catch { Start-Sleep -Milliseconds 500 } }
+          $sw = [Diagnostics.Stopwatch]::StartNew(); $ok = $false
+          foreach ($i in 1..40) { try { $r = Invoke-WebRequest http://127.0.0.1:8791/pin -UseBasicParsing -TimeoutSec 2; if ($r.StatusCode -eq 200) { $ok = $true; break } } catch { Start-Sleep -Milliseconds 250 } }
+          $secs = [math]::Round($sw.Elapsed.TotalSeconds, 1)
           Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
-          Get-Content $log -ErrorAction SilentlyContinue | Select-Object -First 12
+          Get-Content $log -ErrorAction SilentlyContinue
+          Write-Host "answered=$ok after $secs s"
           if (-not $ok) { throw "bridge did not answer under pythonw" }
+          if ($secs -gt 10) { throw "bridge took $secs s to answer - it must be reachable within seconds of starting" }
