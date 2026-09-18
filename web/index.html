@@ -1079,7 +1079,8 @@ $("#stageClose").addEventListener("click",stop);
 $("#launch").addEventListener("click",function(e){ if(e.target===this) stop() });
 document.addEventListener("keydown",function(e){
   if(e.key==="Escape") stop();
-  if(/^[1-8]$/.test(e.key) && $("#launch").hidden && S.tab==="play"){
+  var typing=e.target && (/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName) || e.target.isContentEditable);   // digits typed into the PIN boxes are not shortcuts
+  if(!typing && /^[1-8]$/.test(e.key) && $("#launch").hidden && S.tab==="play"){
     var gm=GAMES[parseInt(e.key,10)-1];
     if(gm) play(gm.id);
   }
