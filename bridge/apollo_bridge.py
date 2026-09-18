@@ -778,7 +778,7 @@ def _console_safe():
 def main():
     _console_safe()
     ap = argparse.ArgumentParser(description="Apollo Home Stream bridge")
-    ap.add_argument("--port", type=int, default=8777)
+    ap.add_argument("--port", type=int, default=8777, help="port to serve the page on (default 8777)")
     ap.add_argument("--bind", default="0.0.0.0", help="0.0.0.0 = reachable from other devices")
     ap.add_argument("--steam", help="Steam install folder (auto-detected if omitted)")
     ap.add_argument("--name", default=socket.gethostname(), help="how this PC is shown in the page")
@@ -788,7 +788,7 @@ def main():
     ap.add_argument("--check-update", action="store_true", help="say whether a newer version is on GitHub, then exit")
     ap.add_argument("--update", action="store_true", help="update this copy from GitHub (git pull, or a verified zip), run the tests, then exit")
     ap.add_argument("--auto-update", action="store_true", default=os.environ.get("APOLLO_AUTO_UPDATE") == "1",
-                    help="at startup, apply any available update and restart (or APOLLO_AUTO_UPDATE=1)")
+                    help="apply any available update at startup and every six hours while running, then restart (or APOLLO_AUTO_UPDATE=1)")
     ap.add_argument("--preflight", action="store_true", help="ready to travel? check sleep, Tailscale, restarts, Steam sign-in; exit 1 if not ready")
     ap.add_argument("--set-awake", choices=["on", "off"], default=None,
                     help="on = the bridge keeps this PC from sleeping whenever it runs; off = let it sleep. Saved, then exit")
@@ -826,7 +826,7 @@ def main():
     steam = args.steam or (default_steam_paths() or [None])[0]
     if not steam:
         print("Couldn't find Steam. Pass --steam \"C:\\Path\\To\\Steam\".", file=sys.stderr)
-        if not args.dry_run:
+        if not (args.dry_run or args.self_test or args.preflight or args.check_update or args.update):
             print("Serving the page anyway with an empty library.", file=sys.stderr)
     steam_key = args.steam_key or os.environ.get("APOLLO_STEAM_KEY", "") or steamaccount.load_config().get("steam_key", "")
     bridge = Bridge(steam, args.name, args.token, pin=args.pin, steam_key=steam_key)

@@ -249,8 +249,10 @@ class HttpGate(unittest.TestCase):
         _, _, body = self.req("GET", "/pin")
         self.assertNotIn(b"URLSearchParams", body)       # the client never reads a redirect target…
         # ...only a numeric app id may ride along, plus one fixed tab name - never anything the URL supplied verbatim
-        self.assertIn(b"location.replace((m?'/?play='+m[1]:'/')+(location.hash==='#power'?'#power':''))", body)
-        self.assertEqual(body.count(b"location.replace("), 1)
+        self.assertIn(b"return (m?'/?play='+m[1]:'/')+(location.hash==='#power'?'#power':'');", body)
+        self.assertEqual(body.count(b"location.replace(target())"), 2)   # after the PIN, and when the PC already knows this screen
+        self.assertEqual(body.count(b"location.replace("), 2)
+        self.assertIn(b"fetch('/api/host'", body)                          # the same-site probe that skips the PIN on the cross-site hand-off
 
     def test_pin_page_never_leaks_the_pin(self):
         _, _, body = self.req("GET", "/pin")

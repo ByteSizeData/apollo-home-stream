@@ -18,7 +18,7 @@ A small web page and a tiny bridge service for [Apollo](https://github.com/Class
 The Install page is documentation. Play and Sleep & wake become real when the page is opened
 from the bridge on your PC.
 
-**Live site:** https://bytesizedata.github.io/apollo-home-stream/ — the guide plus a sample library.
+**Live site:** https://bytesizedata.github.io/apollo-home-stream/ — the guide, and the owner's synced library behind the PIN (a sample library until the secrets below are set).
 Your real games only appear when you open the page *from the bridge on your gaming PC* (below),
 because the bridge is what reads your Steam folder.
 
@@ -94,7 +94,11 @@ python.org (tick *Add to PATH*), or `winget install Python.Python.3.12`.
 --self-test            check Steam, Apollo, ports, network, then run the tests, and exit
 --check-update         say whether a newer version is on GitHub
 --update               fetch the newest version (git pull, or a verified zip), run the tests, roll back on failure
---auto-update          apply updates at startup and every few hours, then restart (or APOLLO_AUTO_UPDATE=1)
+--auto-update          apply updates at startup and every six hours, then restart (or APOLLO_AUTO_UPDATE=1)
+--supervised           "something restarts me when I exit" (the installer's startup task): after an update, just exit
+--bind 127.0.0.1       only answer this PC (default 0.0.0.0 = every device on the network)
+--no-network           no internet checks, no update check, no Steam Web API
+--allow-missing-steam  self-test: a missing Steam folder is a warning, not a failure
 --preflight            ready to travel? sleep, Tailscale (connected, unattended, sign-in expiry), pending
                        Windows restart, startup task, Apollo service, Steam sign-in; exit 1 if not ready
 --set-awake on|off     on = the bridge keeps this PC awake whenever it runs (same switch as the Sleep & wake tab)
@@ -110,7 +114,9 @@ python.org (tick *Add to PATH*), or `winget install Python.Python.3.12`.
 - Cover art comes straight from Steam's CDN by app id.
 - Launch runs `steam://rungameid/<appid>` on the host. It will only launch app ids it found
   in your libraries.
-- Serves the `web/` folder. No database, no accounts, no external services.
+- Serves the `web/` folder. No database, no accounts. It talks to two outside services only:
+  Steam (your library, cover art, store names for games you own but haven't installed) and GitHub
+  (the update check; `--no-network` turns both off).
 
 ### Security
 
@@ -122,7 +128,8 @@ the page and the API — sits behind the PIN:
   see the lockout messages. Change it from the default with `--pin` or `APOLLO_PIN=`.
 - Unlocking sets an `HttpOnly`, `SameSite=Strict` session cookie with a random 256-bit
   token, valid 30 days. *Lock this screen* in the footer ends it.
-- The PIN is compared in constant time and never appears in the page or the logs.
+- The PIN is compared in constant time and never appears in the page or the logs. (On a PC set up by
+  the installer it is visible in the startup task's arguments - to anyone signed in to that PC.)
 - Lockout counts live in memory and are per device address, so restarting the bridge
   resets them and a determined peer could rotate addresses. That's fine for the
   people-in-your-house threat this is built for; it is not a bank vault.
@@ -142,8 +149,8 @@ Do **not** port-forward 8777 to the internet. Use Tailscale (the Install tab exp
 
 **Sync with Steam (recommended).** Give the bridge your Steam Web API key once and the page
 stays in step with Steam itself: what you played last - on *any* device, Deck, laptop, anywhere -
-your total hours, the last two weeks, your avatar, and every game you own but haven't installed
-on this PC (tap a cover to start installing it from the couch). It refreshes every five minutes
+your total hours, the last two weeks, your avatar, and the games you own but haven't installed
+on this PC (the 24 most recently played; tap a cover to start installing it from the couch). It refreshes every five minutes
 in the background, whether or not you're using Apollo.
 
 1. Get a key at https://steamcommunity.com/dev/apikey (sign in; any domain name is fine, e.g. `localhost`).
@@ -155,7 +162,8 @@ python bridge/apollo_bridge.py --set-steam-key YOURKEY
 
 3. Start the bridge normally. The banner says `Steam sync: on`.
 
-The key is stored in `~/.apollo-home-stream/config.json` on the PC, readable only by you. It is
+The key is stored in `~/.apollo-home-stream/config.json` in your Windows profile (other users of
+the PC can't read it; administrators can). It is
 never sent to the page or anywhere except Steam. Because it's *your* key, syncing works even if
 your Steam profile is private. `--forget-steam-key` removes it.
 
@@ -168,22 +176,29 @@ Both tiers sit behind the PIN like everything else.
 ## Show your account on the website
 
 The public site can't see your PC. It *can* carry a copy of your Steam library that GitHub
-refreshes from Steam **every 30 minutes** - what you played last on any device, hours, the last
-two weeks, your avatar - encrypted with your PIN so only you can read it. Then every screen in
-the house opens the same link, enters the PIN, and gets a **Stream** button on every game.
+refreshes from Steam **a few times a day** (the schedule asks for every 30 minutes; GitHub runs
+free schedules when it has spare capacity - measured: about every 4 hours, occasionally 9; the page
+shows the library's true age) - what you played last on any device, hours, the last two weeks, your
+avatar - encrypted with your PIN so only you can read it; nothing personal, not even your name, sits
+outside the encryption. Then every screen in the house opens the same link, enters the PIN, and gets a
+**Stream** button on every game.
 
 1. Get a Web API key at https://steamcommunity.com/dev/apikey and find your Steam ID
    (your profile URL: the 17-digit number, or the custom name after `/id/`).
 2. In the GitHub repo: **Settings → Secrets and variables → Actions → New repository secret**, add:
    - `STEAM_API_KEY` - the key
    - `STEAM_ID` - the 17-digit id, the profile URL, or the custom name
-   - `SITE_PASSPHRASE` - optional. Leave it out to unlock with the PIN (2550). A longer
-     passphrase is much stronger; the site is public, and a 4-digit PIN only keeps casual eyes out.
+   - `SITE_PASSPHRASE` - optional but recommended. Leave it out to unlock with the PIN (2550). The
+     site is public and 2550 is printed in this README, so a 4-digit PIN keeps nobody out who reads
+     it; a longer passphrase only you know does.
+   - `BRIDGE_URL` - optional: the PC's Tailscale address, e.g. `http://gaming-pc.tail1234.ts.net:8777`
+     (the installer prints it). With it set, no screen ever needs the address typed in.
 3. **Actions → publish site → Run workflow** once. From then on it refreshes itself.
 
-Then on each screen: open the site, enter the PIN, and - the first time - paste the bridge
-address the PC prints when it starts (`http://your-pc-name:8777`). After that, **Stream** on any
-game hands it to the PC, which launches it and tells you which client to open.
+Then on each screen: open the site, enter the PIN, and - only if `BRIDGE_URL` isn't set - paste
+the PC's address once. After that, **Stream** on any game hands it to the PC, which launches it and
+tells you which client to open. The page shows the 24 most recently played installed games and
+the 24 most recently played games you own but haven't installed.
 
 ## Keeping it working
 
@@ -219,8 +234,8 @@ afterwards, and rolled back automatically if they fail. `--auto-update` (what th
 does that on every start **and every six hours while running**, then restarts itself - never within
 30 minutes of a game launch, and screens stay signed in across the restart. Updates only ever come from `github.com/ByteSizeData/apollo-home-stream`.
 
-**Continuous tests.** Every push runs the test suite on Linux and Windows across two Python
-versions, and **really installs, checks and uninstalls** the one-line installer on a Windows machine
+**Continuous tests.** Every push runs the test suite on Linux and Windows across three Python
+versions (3.9, 3.12, 3.14), and **really installs, checks and uninstalls** the one-line installer on a Windows machine
 (see the *tests* badge / Actions tab), and every change to `web/` republishes the
 live site automatically. Nothing to copy by hand.
 

@@ -92,6 +92,18 @@ button:disabled{opacity:.5; cursor:not-allowed; box-shadow:none}
     function tick(){ if(left<=0){ clearInterval(lockTimer); setLocked(false); msg.textContent=''; clear(); return; } msg.textContent='Too many tries — wait '+left+' s'; left--; }
     tick(); lockTimer=setInterval(tick,1000);
   }
+  function target(){                                   // where to go once unlocked: home, plus at most a numeric app id and one fixed tab name
+    var m=/[?&]play=(\d{1,10})(?:&|$)/.exec(location.search);
+    return (m?'/?play='+m[1]:'/')+(location.hash==='#power'?'#power':'');
+  }
+  // Reached from the public website? The browser withholds the PIN cookie on that cross-site hop (SameSite=Strict, on
+  // purpose), so the PC could not tell this screen was already unlocked. Asking from HERE is same-site, so the cookie
+  // rides along: if the PC still knows this screen, skip the PIN and carry straight on.
+  setLocked(true); msg.textContent='Checking…';
+  fetch('/api/host',{cache:'no-store'}).then(function(r){ return r.status; }).catch(function(){ return 0; }).then(function(st){
+    if(st===200){ location.replace(target()); return; }
+    setLocked(false); msg.textContent=''; boxes[0].focus();
+  });
   function submit(){
     var pin=boxes.map(function(b){return b.value}).join('');
     if(pin.length<4) return;
@@ -99,10 +111,10 @@ button:disabled{opacity:.5; cursor:not-allowed; box-shadow:none}
     fetch('/api/pin',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pin:pin})})
       .then(function(r){ return r.json().then(function(j){ return {s:r.status,j:j}; }); })
       .then(function(x){
-        if(x.s===200){ var m=/[?&]play=(\d{1,10})(?:&|$)/.exec(location.search); location.replace((m?'/?play='+m[1]:'/')+(location.hash==='#power'?'#power':'')); return; }   // only a numeric app id may ride along
+        if(x.s===200){ location.replace(target()); return; }
         if(x.s===429){ lock(x.j.retry_after||30); return; }
         go.disabled=false; wrap.classList.remove('shake'); void wrap.offsetWidth; wrap.classList.add('shake');
-        msg.textContent = (typeof x.j.left==='number') ? 'Wrong PIN — '+x.j.left+' more tries before a timeout' : 'Wrong PIN';
+        msg.textContent = (typeof x.j.left==='number') ? 'Wrong PIN — '+x.j.left+(x.j.left===1?' more try':' more tries')+' before a timeout' : 'Wrong PIN';
         clear();
       })
       .catch(function(){ go.disabled=false; msg.textContent='Couldn’t reach the PC'; });

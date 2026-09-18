@@ -118,7 +118,7 @@ def encrypt(obj, passphrase):
     ct = AESGCM(dk).encrypt(iv, json.dumps(obj, separators=(",", ":")).encode("utf-8"), None)
     b64 = lambda b: base64.b64encode(b).decode("ascii")
     return {"v": 1, "enc": "aes-256-gcm", "kdf": "pbkdf2-sha256", "iter": PBKDF2_ITERATIONS,
-            "salt": b64(salt), "iv": b64(iv), "data": b64(ct), "updated": obj["updated"], "persona": obj.get("persona", "")}
+            "salt": b64(salt), "iv": b64(iv), "data": b64(ct), "updated": obj["updated"]}      # nothing personal outside the lock: not even the name
 
 
 def decrypt(blob, passphrase):

@@ -16,9 +16,9 @@
   With options:
       & ([scriptblock]::Create((irm https://bytesizedata.github.io/apollo-home-stream/install.ps1))) -SteamKey YOURKEY
 
-  Only the firewall, the startup task, Tailscale, power and Apollo-service steps run as
-  administrator (one Windows prompt). Your files, your Steam key and Steam's own startup entry
-  are handled as you, so nothing in your profile ends up owned by the administrator.
+  Installing programs, the firewall, the startup task, Tailscale, power, Apollo's service and
+  Autologon run as administrator (one Windows prompt). Your files, your Steam key and Steam's own
+  startup entry are handled as you, so nothing in your profile ends up owned by the administrator.
 
 .PARAMETER DryRun       Show every step, change nothing.
 .PARAMETER Status       Read-only report: is everything still in place and running?
@@ -66,10 +66,15 @@ $script:NotReady = $false   # the travel check found a FAIL the installer itself
 # Run again without options (the plain one-liner can't carry any): keep the PIN and port already chosen for this PC,
 # never fall back to the public defaults and sign every screen out.
 $existing = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
-if ($existing -and $Stage -eq "All" -and -not $Uninstall) {
+if ($existing -and $Stage -eq "All") {
   $oldArgs = "$($existing.Actions[0].Arguments)"
   if (-not $PSBoundParameters.ContainsKey("Pin")  -and $oldArgs -match '--pin "([A-Za-z0-9_\-]*)"') { $Pin = $Matches[1] }
   if (-not $PSBoundParameters.ContainsKey("Port") -and $oldArgs -match '--port (\d+)') { $Port = [int]$Matches[1] }
+}
+# A sleep choice made on the Sleep & wake tab belongs to the owner: a re-run must not put Windows back to never-sleep.
+if ($Stage -eq "All" -and -not $KeepSleep) {
+  $cfgProbe = Join-Path $env:USERPROFILE ".apollo-home-stream\config.json"
+  if ((Test-Path $cfgProbe) -and ((Get-Content $cfgProbe -Raw -ErrorAction SilentlyContinue) -match '"awake"')) { $KeepSleep = $true }
 }
 $FwBridge  = "Apollo Home Stream bridge (TCP $Port, home network + Tailscale)"
 $FwBridgeOld = "Apollo Home Stream bridge (TCP $Port, home network)"
@@ -175,7 +180,11 @@ function Tailscale-State {
 }
 function Key-ExpiryDays($st) {
   try {
-    if ($st -and $st.Self -and $st.Self.KeyExpiry) { return [int](([datetime]$st.Self.KeyExpiry).ToUniversalTime() - [datetime]::UtcNow).TotalDays }
+    if ($st -and $st.Self -and $st.Self.KeyExpiry) {
+      $when = ([datetime]$st.Self.KeyExpiry).ToUniversalTime()
+      if ($when.Year -lt 1971) { return $null }              # Tailscale's "never" is year 0001
+      return [int]($when - [datetime]::UtcNow).TotalDays
+    }
   } catch { }
   return $null
 }
@@ -198,7 +207,8 @@ function Invoke-AdminStage {
       Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue
     } | Out-Null
     Do-It "remove firewall rules" {
-      foreach ($n in @($FwBridge, $FwBridgeOld, $FwTs)) { Remove-NetFirewallRule -DisplayName $n -ErrorAction SilentlyContinue }
+      Get-NetFirewallRule -DisplayName "Apollo Home Stream bridge (TCP *" -ErrorAction SilentlyContinue | Remove-NetFirewallRule -ErrorAction SilentlyContinue
+      Remove-NetFirewallRule -DisplayName $FwTs -ErrorAction SilentlyContinue
     } | Out-Null
     Say "   (sleep settings, Tailscale, Apollo and $InstallDir were left alone)" "DarkGray"
     return
@@ -321,7 +331,7 @@ function Invoke-AdminStage {
   }
 
   Step "5/7  Never asleep when you reach for it"
-  if ($KeepSleep) { Say "   (skipped: -KeepSleep. The PC can't be woken from outside your home - see the Sleep & wake tab.)" "Yellow" }
+  if ($KeepSleep) { Say "   (left alone: -KeepSleep, or a choice already made on the Sleep & wake tab - the bridge applies that one)" "DarkGray" }
   else {
     Do-It "never sleep or hibernate while plugged in (the screen may still turn off)" {
       Native { powercfg /change standby-timeout-ac 0 } | Out-Null

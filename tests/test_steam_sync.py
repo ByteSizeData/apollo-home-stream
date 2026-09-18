@@ -61,9 +61,10 @@ class Fetch(unittest.TestCase):
 @unittest.skipUnless(HAVE_CRYPTO, "cryptography not installed here (CI installs it)")
 class Crypto(unittest.TestCase):
     def test_round_trip_and_wrong_pin(self):
-        obj = {"updated": 1, "persona": "x", "games": [{"appid": 1}]}
+        obj = {"updated": 1, "persona": "SecretPersonaName", "games": [{"appid": 1}]}
         blob = ss.encrypt(obj, "2550")
-        self.assertEqual(set(blob), {"v", "enc", "kdf", "iter", "salt", "iv", "data", "updated", "persona"})
+        self.assertEqual(set(blob), {"v", "enc", "kdf", "iter", "salt", "iv", "data", "updated"})     # the persona stays inside the encryption
+        self.assertNotIn("SecretPersonaName", json.dumps(blob))
         self.assertEqual(ss.decrypt(blob, "2550"), obj)
         self.assertNotIn("games", json.dumps(blob))                        # the library itself is not readable
         with self.assertRaises(Exception):
